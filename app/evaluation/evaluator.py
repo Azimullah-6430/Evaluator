@@ -34,6 +34,7 @@ class EvaluationAgent:
         print("EVALUATION AGENT STARTED")
         print("=" * 70)
         try:
+            request = self._normalize_request(request)
             self._validate_request(request)
 
             print("[1/3] Reading question paper structure...")
@@ -77,6 +78,32 @@ class EvaluationAgent:
             traceback.print_exc()
             print("=" * 70)
             raise RuntimeError(f"Evaluation failed: {exc}") from exc
+
+    def _normalize_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize file inputs so both path strings and file-info objects work.
+
+        Older versions of the Flask route may pass a saved file path directly,
+        while newer versions pass {"path": ...}. Accept both forms to prevent
+        avoidable "information must be an object" failures.
+        """
+        if not isinstance(request, dict):
+            raise ValueError("Evaluation request must be an object.")
+
+        normalized = dict(request)
+        for field in ("question_paper", "answer_script", "rubrics"):
+            value = normalized.get(field)
+            if isinstance(value, str) and value.strip():
+                normalized[field] = {"path": value.strip()}
+            elif isinstance(value, dict):
+                # Accept common path key variants from older route code.
+                if not value.get("path"):
+                    for key in ("filepath", "file_path", "saved_path", "filename"):
+                        if value.get(key):
+                            value = dict(value)
+                            value["path"] = value[key]
+                            break
+                normalized[field] = value
+        return normalized
 
     def _validate_request(self, request: Dict[str, Any]) -> None:
         if not self.api_key:
