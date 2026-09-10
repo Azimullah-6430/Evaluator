@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Smart Education System | Evaluation Agent</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            min-height: 100vh;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+
+        .navbar {
+            background: #ffffff;
+            padding: 18px 8%;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 22px;
+            font-weight: bold;
+        }
+
+        .logo span {
+            color: #2563eb;
+        }
+
+        .agent-badge {
+            background: #e0eaff;
+            color: #1d4ed8;
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        .container {
+            width: min(1000px, 92%);
+            margin: 40px auto;
+        }
+
+        .hero {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .hero h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .hero p {
+            color: #6b7280;
+            line-height: 1.6;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+            margin-bottom: 25px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 18px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 13px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: #2563eb;
+        }
+
+        .file-box {
+            border: 2px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 20px;
+            background: #f8fafc;
+        }
+
+        .file-box h3 {
+            font-size: 16px;
+            margin-bottom: 7px;
+        }
+
+        .file-box p {
+            color: #6b7280;
+            font-size: 13px;
+            margin-bottom: 14px;
+            line-height: 1.5;
+        }
+
+        .required {
+            color: #dc2626;
+        }
+
+        .optional {
+            color: #6b7280;
+            font-size: 12px;
+        }
+
+        .file-name {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #2563eb;
+            word-break: break-word;
+        }
+
+        .submit-button {
+            width: 100%;
+            border: none;
+            padding: 15px;
+            border-radius: 10px;
+            background: #2563eb;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 25px;
+        }
+
+        .submit-button:hover {
+            background: #1d4ed8;
+        }
+
+        .submit-button:disabled {
+            background: #93c5fd;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+            color: #2563eb;
+            font-weight: 600;
+        }
+
+        .error-message {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background: #fee2e2;
+            color: #b91c1c;
+            border-radius: 10px;
+        }
+
+        .result-section {
+            display: none;
+        }
+
+        .result-header {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .result-box {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 18px;
+            text-align: center;
+        }
+
+        .result-box span {
+            display: block;
+            color: #6b7280;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+
+        .result-box strong {
+            font-size: 22px;
+            color: #2563eb;
+        }
+
+        .question-result {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .question-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 15px;
+        }
+
+        .question-number {
+            font-weight: bold;
+            font-size: 17px;
+        }
+
+        .marks {
+            background: #e0eaff;
+            color: #1d4ed8;
+            padding: 7px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .feedback-item {
+            margin-top: 12px;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .feedback-item strong {
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .overall-feedback {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 18px;
+            line-height: 1.7;
+            margin-bottom: 20px;
+        }
+
+        .list-box {
+            margin-top: 20px;
+        }
+
+        .list-box h3 {
+            margin-bottom: 10px;
+        }
+
+        .list-box ul {
+            padding-left: 20px;
+            line-height: 1.8;
+        }
+
+        @media (max-width: 700px) {
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .result-header {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .navbar {
+                padding: 15px 4%;
+            }
+
+            .hero h1 {
+                font-size: 25px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="logo">
+            Smart<span>Education</span>
+        </div>
+
+        <div class="agent-badge">
+            Evaluation Agent
+        </div>
+    </nav>
+
+
+    <main class="container">
+
+        <!-- Header -->
+        <section class="hero">
+            <h1>AI Answer Script Evaluation</h1>
+
+            <p>
+                Upload a question paper and handwritten answer script.
+                Rubrics are optional. The Evaluation Agent analyzes
+                questions, matches answers even when written in a different
+                order, and generates marks and feedback.
+            </p>
+        </section>
+
+
+        <!-- Upload Form -->
+        <section class="card">
+
+            <h2 class="section-title">
+                Evaluation Details
+            </h2>
+
+            <form id="evaluationForm">
+
+                <div class="grid">
+
+                    <!-- Subject -->
+                    <div class="field">
+                        <label for="subject">
+                            Subject <span class="required">*</span>
+                        </label>
+
+                        <select
+                            id="subject"
+                            name="subject"
+                            required
+                        >
+                            <option value="">
+                                Select Subject
+                            </option>
+
+                            <option value="Mathematics">
+                                Mathematics
+                            </option>
+
+                            <option value="Physics">
+                                Physics
+                            </option>
+
+                            <option value="Chemistry">
+                                Chemistry
+                            </option>
+
+                            <option value="Biology">
+                                Biology
+                            </option>
+
+                            <option value="Computer Science">
+                                Computer Science
+                            </option>
+
+                            <option value="English">
+                                English
+                            </option>
+
+                            <option value="Other">
+                                Other
+                            </option>
+                        </select>
+                    </div>
+
+
+                    <!-- Student Name -->
+                    <div class="field">
+                        <label for="student_name">
+                            Student Name
+                        </label>
+
+                        <input
+                            type="text"
+                            id="student_name"
+                            name="student_name"
+                            placeholder="Enter student name"
+                        >
+                    </div>
+
+
+                    <!-- Roll Number -->
+                    <div class="field full-width">
+                        <label for="roll_number">
+                            Roll Number
+                        </label>
+
+                        <input
+                            type="text"
+                            id="roll_number"
+                            name="roll_number"
+                            placeholder="Enter roll number"
+                        >
+                    </div>
+
+
+                    <!-- Question Paper -->
+                    <div class="file-box">
+
+                        <h3>
+                            Question Paper
+                            <span class="required">*</span>
+                        </h3>
+
+                        <p>
+                            Upload the question paper. The system uses it
+                            as the source of truth for questions and
+                            maximum marks.
+                        </p>
+
+                        <input
+                            type="file"
+                            id="question_paper"
+                            name="question_paper"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            required
+                        >
+
+                        <div
+                            class="file-name"
+                            id="questionPaperName"
+                        ></div>
+
+                    </div>
+
+
+                    <!-- Answer Script -->
+                    <div class="file-box">
+
+                        <h3>
+                            Handwritten Answer Script
+                            <span class="required">*</span>
+                        </h3>
+
+                        <p>
+                            Upload the student's answer script in PDF or
+                            image format.
+                        </p>
+
+                        <input
+                            type="file"
+                            id="answer_script"
+                            name="answer_script"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            required
+                        >
+
+                        <div
+                            class="file-name"
+                            id="answerScriptName"
+                        ></div>
+
+                    </div>
+
+
+                    <!-- Rubrics -->
+                    <div class="file-box full-width">
+
+                        <h3>
+                            Rubrics
+                            <span class="optional">
+                                (Optional)
+                            </span>
+                        </h3>
+
+                        <p>
+                            If rubrics are uploaded, the Evaluation Agent
+                            follows them. Otherwise, it generates evaluation
+                            criteria from the question paper.
+                        </p>
+
+                        <input
+                            type="file"
+                            id="rubrics"
+                            name="rubrics"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                        >
+
+                        <div
+                            class="file-name"
+                            id="rubricsName"
+                        ></div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- Submit -->
+                <button
+                    type="submit"
+                    class="submit-button"
+                    id="evaluateButton"
+                >
+                    Evaluate Answer Script
+                </button>
+
+            </form>
+
+
+            <!-- Loading -->
+            <div
+                class="loading"
+                id="loading"
+            >
+                Analyzing documents and evaluating answers.
+                Please wait...
+            </div>
+
+
+            <!-- Error -->
+            <div
+                class="error-message"
+                id="errorMessage"
+            ></div>
+
+        </section>
+
+
+        <!-- Results -->
+        <section
+            class="card result-section"
+            id="resultSection"
+        >
+
+            <h2 class="section-title">
+                Evaluation Result
+            </h2>
+
+
+            <!-- Summary -->
+            <div class="result-header">
+
+                <div class="result-box">
+                    <span>Maximum Marks</span>
+                    <strong id="maximumMarks">0</strong>
+                </div>
+
+                <div class="result-box">
+                    <span>Marks Obtained</span>
+                    <strong id="marksObtained">0</strong>
+                </div>
+
+                <div class="result-box">
+                    <span>Percentage</span>
+                    <strong id="percentage">0%</strong>
+                </div>
+
+                <div class="result-box">
+                    <span>Grade</span>
+                    <strong id="grade">-</strong>
+                </div>
+
+            </div>
+
+
+            <!-- Overall Feedback -->
+            <h3>Overall Feedback</h3>
+
+            <div
+                class="overall-feedback"
+                id="overallFeedback"
+            >
+            </div>
+
+
+            <!-- Strengths -->
+            <div class="list-box">
+                <h3>Strengths</h3>
+                <ul id="strengthsList"></ul>
+            </div>
+
+
+            <!-- Weaknesses -->
+            <div class="list-box">
+                <h3>Areas for Improvement</h3>
+                <ul id="weaknessesList"></ul>
+            </div>
+
+
+            <!-- Question Results -->
+            <div class="list-box">
+
+                <h3>
+                    Question-wise Evaluation
+                </h3>
+
+                <div id="questionsContainer"></div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <script>
+
+        // -------------------------------------------------
+        // File Name Display
+        // -------------------------------------------------
+
+        function showFileName(
+            inputId,
+            displayId
+        ) {
+
+            const input = document.getElementById(
+                inputId
+            );
+
+            const display = document.getElementById(
+                displayId
+            );
+
+            input.addEventListener(
+                "change",
+                function () {
+
+                    if (
+                        input.files &&
+                        input.files.length > 0
+                    ) {
+
+                        display.textContent =
+                            "Selected: " +
+                            input.files[0].name;
+
+                    } else {
+
+                        display.textContent = "";
+                    }
+
+                }
+            );
+        }
+
+
+        showFileName(
+            "question_paper",
+            "questionPaperName"
+        );
+
+        showFileName(
+            "answer_script",
+            "answerScriptName"
+        );
+
+        showFileName(
+            "rubrics",
+            "rubricsName"
+        );
+
+
+        // -------------------------------------------------
+        // Form Submission
+        // -------------------------------------------------
+
+        const form = document.getElementById(
+            "evaluationForm"
+        );
+
+        const loading = document.getElementById(
+            "loading"
+        );
+
+        const errorMessage = document.getElementById(
+            "errorMessage"
+        );
+
+        const evaluateButton = document.getElementById(
+            "evaluateButton"
+        );
+
+        const resultSection = document.getElementById(
+            "resultSection"
+        );
+
+
+        form.addEventListener(
+            "submit",
+            async function (event) {
+
+                event.preventDefault();
+
+                // Hide previous messages
+                errorMessage.style.display = "none";
+
+                resultSection.style.display = "none";
+
+                // Create FormData
+                const formData = new FormData(form);
+
+                // Start loading
+                loading.style.display = "block";
+
+                evaluateButton.disabled = true;
+
+                evaluateButton.textContent =
+                    "Evaluating...";
+
+                try {
+
+                    const response = await fetch(
+                        "/evaluate",
+                        {
+                            method: "POST",
+                            body: formData
+                        }
+                    );
+
+                    const data = await response.json();
+
+                    // API returned an error
+                    if (!response.ok || !data.success) {
+
+                        throw new Error(
+                            data.error ||
+                            "Evaluation failed."
+                        );
+                    }
+
+                    // Display evaluation result
+                    displayResult(
+                        data.result
+                    );
+
+                } catch (error) {
+
+                    errorMessage.textContent =
+                        error.message;
+
+                    errorMessage.style.display =
+                        "block";
+
+                } finally {
+
+                    loading.style.display = "none";
+
+                    evaluateButton.disabled = false;
+
+                    evaluateButton.textContent =
+                        "Evaluate Answer Script";
+                }
+
+            }
+        );
+
+
+        // -------------------------------------------------
+        // Display Result
+        // -------------------------------------------------
+
+        function displayResult(result) {
+
+            document.getElementById(
+                "maximumMarks"
+            ).textContent =
+                result.maximum_marks ?? 0;
+
+
+            document.getElementById(
+                "marksObtained"
+            ).textContent =
+                result.marks_obtained ?? 0;
+
+
+            document.getElementById(
+                "percentage"
+            ).textContent =
+                (result.percentage ?? 0) + "%";
+
+
+            document.getElementById(
+                "grade"
+            ).textContent =
+                result.grade ?? "-";
+
+
+            document.getElementById(
+                "overallFeedback"
+            ).textContent =
+                result.overall_feedback ||
+                "No overall feedback generated.";
+
+
+            // ---------------------------------------------
+            // Strengths
+            // ---------------------------------------------
+
+            const strengthsList =
+                document.getElementById(
+                    "strengthsList"
+                );
+
+            strengthsList.innerHTML = "";
+
+            const strengths =
+                result.strengths || [];
+
+            if (strengths.length === 0) {
+
+                const item =
+                    document.createElement("li");
+
+                item.textContent =
+                    "No strengths were listed.";
+
+                strengthsList.appendChild(item);
+
+            } else {
+
+                strengths.forEach(
+                    function (strength) {
+
+                        const item =
+                            document.createElement("li");
+
+                        item.textContent = strength;
+
+                        strengthsList.appendChild(item);
+
+                    }
+                );
+            }
+
+
+            // ---------------------------------------------
+            // Weaknesses
+            // ---------------------------------------------
+
+            const weaknessesList =
+                document.getElementById(
+                    "weaknessesList"
+                );
+
+            weaknessesList.innerHTML = "";
+
+            const weaknesses =
+                result.weaknesses || [];
+
+            if (weaknesses.length === 0) {
+
+                const item =
+                    document.createElement("li");
+
+                item.textContent =
+                    "No weaknesses were listed.";
+
+                weaknessesList.appendChild(item);
+
+            } else {
+
+                weaknesses.forEach(
+                    function (weakness) {
+
+                        const item =
+                            document.createElement("li");
+
+                        item.textContent = weakness;
+
+                        weaknessesList.appendChild(item);
+
+                    }
+                );
+            }
+
+
+            // ---------------------------------------------
+            // Question-wise Results
+            // ---------------------------------------------
+
+            const questionsContainer =
+                document.getElementById(
+                    "questionsContainer"
+                );
+
+            questionsContainer.innerHTML = "";
+
+            const questions =
+                result.questions || [];
+
+
+            questions.forEach(
+                function (question) {
+
+                    const feedback =
+                        question.feedback || {};
+
+                    const questionBox =
+                        document.createElement("div");
+
+                    questionBox.className =
+                        "question-result";
+
+
+                    questionBox.innerHTML = `
+
+                        <div class="question-top">
+
+                            <div>
+
+                                <div class="question-number">
+                                    Question
+                                    ${escapeHTML(
+                                        question.question_number ?? "-"
+                                    )}
+                                </div>
+
+                                <div>
+                                    Type:
+                                    ${escapeHTML(
+                                        question.question_type ??
+                                        "Not specified"
+                                    )}
+                                </div>
+
+                                <div>
+                                    Status:
+                                    ${escapeHTML(
+                                        question.status ??
+                                        "Not specified"
+                                    )}
+                                </div>
+
+                            </div>
+
+                            <div class="marks">
+                                ${escapeHTML(
+                                    question.marks_obtained ?? 0
+                                )}
+                                /
+                                ${escapeHTML(
+                                    question.maximum_marks ?? 0
+                                )}
+                            </div>
+
+                        </div>
+
+
+                        <div class="feedback-item">
+                            <strong>
+                                What was done well
+                            </strong>
+
+                            ${escapeHTML(
+                                feedback.what_was_done_well ||
+                                "No feedback available."
+                            )}
+                        </div>
+
+
+                        <div class="feedback-item">
+                            <strong>
+                                Mistakes
+                            </strong>
+
+                            ${escapeHTML(
+                                feedback.mistakes ||
+                                "No major mistakes mentioned."
+                            )}
+                        </div>
+
+
+                        <div class="feedback-item">
+                            <strong>
+                                Missing Points
+                            </strong>
+
+                            ${escapeHTML(
+                                feedback.missing_points ||
+                                "No missing points mentioned."
+                            )}
+                        </div>
+
+
+                        <div class="feedback-item">
+                            <strong>
+                                Expected Answer
+                            </strong>
+
+                            ${escapeHTML(
+                                feedback.expected_answer ||
+                                "Not available."
+                            )}
+                        </div>
+
+
+                        <div class="feedback-item">
+                            <strong>
+                                How to Improve
+                            </strong>
+
+                            ${escapeHTML(
+                                feedback.improvement ||
+                                "No improvement suggestion available."
+                            )}
+                        </div>
+
+                    `;
+
+                    questionsContainer.appendChild(
+                        questionBox
+                    );
+
+                }
+            );
+
+
+            // Show result section
+            resultSection.style.display = "block";
+
+            // Scroll to result
+            resultSection.scrollIntoView({
+                behavior: "smooth",
+                block: "start"
+            });
+        }
+
+
+        // -------------------------------------------------
+        // Basic HTML Escaping
+        // -------------------------------------------------
+
+        function escapeHTML(value) {
+
+            const div =
+                document.createElement("div");
+
+            div.textContent =
+                String(value);
+
+            return div.innerHTML;
+        }
+
+    </script>
+
+</body>
+</html>
