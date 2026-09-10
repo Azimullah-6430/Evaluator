@@ -1,35 +1,35 @@
 import os
 import json
 import base64
-import mimetypes
 import re
+from typing import Dict, Any, List, Optional
 
 import requests
-import fitz  # PyMuPDF
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class EvaluationAgent:
     """
-    Core AI Evaluation Agent for handwritten answer scripts.
+    Smart Education System - AI Evaluation Agent
 
-    Responsibilities:
-    1. Analyze the question paper.
-    2. Determine subject and total marks.
-    3. Analyze the handwritten answer script.
-    4. Detect question numbers even when answers are out of order.
-    5. Use optional rubrics when provided.
-    6. Evaluate answers question-by-question.
-    7. Calculate marks, percentage and grade.
-    8. Generate detailed feedback.
+    Main principles:
+    1. Every question paper is treated as a new examination.
+    2. The uploaded question paper is the source of truth.
+    3. Total marks are extracted dynamically.
+    4. Marks for every question are extracted dynamically.
+    5. Answers can appear in any order.
+    6. Rubrics are optional.
+    7. Marks can never exceed the marks assigned to a question.
+    8. Final marks can never exceed the extracted total marks.
     """
 
     def __init__(self):
 
-        # -------------------------------------------------
-        # AI Configuration
-        # -------------------------------------------------
-
-        self.api_key = os.getenv("Gemini_API_Key")
+        # IMPORTANT:
+        # Render Environment Variable must be named GEMINI_API_KEY
+        self.api_key = os.getenv("GEMINI_API_KEY")
 
         self.model = os.getenv(
             "GEMINI_MODEL",
@@ -37,154 +37,126 @@ class EvaluationAgent:
         )
 
         self.api_url = (
-            "https://generativelanguage.googleapis.com/v1beta/"
-            f"models/{self.model}:generateContent"
+            "https://generativelanguage.googleapis.com/"
+            f"v1beta/models/{self.model}:generateContent"
         )
 
-        # -------------------------------------------------
-        # Safety / Evaluation Settings
-        # -------------------------------------------------
+        self.timeout = 180
 
-        self.max_file_size = 50 * 1024 * 1024
+    # ==========================================================
+    # MAIN EVALUATION PIPELINE
+    # ==========================================================
 
-        self.supported_extensions = {
-            ".pdf",
-            ".jpg",
-            ".jpeg",
-            ".png"
-        }
+    def evaluate(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
 
-    # =====================================================
-    # MAIN EVALUATION FUNCTION
-    # =====================================================
+        self._validate_request(request_data)
 
-    def evaluate(self, evaluation_request):
+        subject = request_data["subject"]
 
-        """
-        Main entry point used by Flask.
+        # ------------------------------------------------------
+        # STEP 1
+        # Analyze the uploaded question paper.
+        # This happens EVERY TIME a new paper is uploaded.
+        # ------------------------------------------------------
 
-        evaluation_request contains:
+        question_paper = self.analyze_question_paper(
+            request_data["question_paper"],
+            subject
+        )
 
-        {
-            "subject": "...",
-            "student_name": "...",
-            "roll_number": "...",
-            "question_paper": "...",
-            "answer_script": "...",
-            "rubrics": "..." or None
-        }
-        """
+        # ------------------------------------------------------
+        # STEP 2
+        # Validate extracted question paper structure.
+        # ------------------------------------------------------
 
-        # -------------------------------------------------
-        # Validate request
-        # -------------------------------------------------
+        self._validate_question_paper_structure(
+            question_paper
+        )
 
-        self._validate_request(evaluation_request)
+        # ------------------------------------------------------
+        # STEP 3
+        # Analyze handwritten answer script.
+        # Answers may be written in ANY ORDER.
+        # ------------------------------------------------------
 
-        subject = evaluation_request["subject"]
-        student_name = evaluation_request.get(
+        answer_script = self.analyze_answer_script(
+            request_data["answer_script"],
+            subject,
+            question_paper
+        )
+
+        # ------------------------------------------------------
+        # STEP 4
+        # Optional rubrics
+        # ------------------------------------------------------
+
+        rubric_data = None
+
+        if request_data.get("rubrics"):
+
+            rubric_data = self.analyze_rubrics(
+                request_data["rubrics"],
+                subject,
+                question_paper
+            )
+
+        # ------------------------------------------------------
+        # STEP 5
+        # Evaluate every detected answer.
+        # ------------------------------------------------------
+
+        evaluation = self.evaluate_answers(
+            subject=subject,
+            question_paper=question_paper,
+            answer_script=answer_script,
+            rubrics=rubric_data
+        )
+
+        # ------------------------------------------------------
+        # STEP 6
+        # Recalculate marks safely on the server.
+        # Do NOT trust AI's total blindly.
+        # ------------------------------------------------------
+
+        final_result = self.calculate_final_result(
+            question_paper,
+            evaluation
+        )
+
+        # ------------------------------------------------------
+        # STEP 7
+        # Student information
+        # ------------------------------------------------------
+
+        final_result["student_name"] = request_data.get(
             "student_name",
             ""
         )
 
-        roll_number = evaluation_request.get(
+        final_result["roll_number"] = request_data.get(
             "roll_number",
             ""
         )
 
-        question_paper_path = evaluation_request[
-            "question_paper"
-        ]
-
-        answer_script_path = evaluation_request[
-            "answer_script"
-        ]
-
-        rubrics_path = evaluation_request.get(
-            "rubrics"
-        )
-
-        # -------------------------------------------------
-        # STEP 1
-        # Analyze Question Paper
-        # -------------------------------------------------
-
-        question_paper_data = self.analyze_question_paper(
-            question_paper_path,
-            subject
-        )
-
-        # -------------------------------------------------
-        # STEP 2
-        # Analyze Answer Script
-        # -------------------------------------------------
-
-        answer_script_data = self.analyze_answer_script(
-            answer_script_path,
-            subject,
-            question_paper_data
-        )
-
-        # -------------------------------------------------
-        # STEP 3
-        # Analyze Rubrics if supplied
-        # -------------------------------------------------
-
-        rubric_data = None
-
-        if rubrics_path:
-            rubric_data = self.analyze_rubrics(
-                rubrics_path,
-                subject,
-                question_paper_data
-            )
-
-        # -------------------------------------------------
-        # STEP 4
-        # Evaluate Answers
-        # -------------------------------------------------
-
-        evaluation = self.evaluate_answers(
-            subject=subject,
-            question_paper=question_paper_data,
-            answer_script=answer_script_data,
-            rubrics=rubric_data
-        )
-
-        # -------------------------------------------------
-        # STEP 5
-        # Calculate Final Result
-        # -------------------------------------------------
-
-        final_result = self.calculate_final_result(
-            evaluation=evaluation,
-            question_paper=question_paper_data
-        )
-
-        # -------------------------------------------------
-        # STEP 6
-        # Add Student Information
-        # -------------------------------------------------
-
-        final_result["student"] = {
-            "name": student_name,
-            "roll_number": roll_number,
-            "subject": subject
-        }
-
-        final_result["evaluation_metadata"] = {
-            "rubrics_used": rubrics_path is not None,
-            "evaluation_engine": "AI Evaluation Agent",
-            "question_paper_used_as_source_of_truth": True
-        }
+        final_result["subject"] = subject
 
         return final_result
 
-    # =====================================================
-    # VALIDATION
-    # =====================================================
+    # ==========================================================
+    # REQUEST VALIDATION
+    # ==========================================================
 
-    def _validate_request(self, request):
+    def _validate_request(
+        self,
+        request_data: Dict[str, Any]
+    ):
+
+        if not self.api_key:
+
+            raise ValueError(
+                "GEMINI_API_KEY is not configured. "
+                "Add GEMINI_API_KEY to the Render Environment Variables."
+            )
 
         required_fields = [
             "subject",
@@ -194,306 +166,562 @@ class EvaluationAgent:
 
         for field in required_fields:
 
-            if not request.get(field):
+            if not request_data.get(field):
 
                 raise ValueError(
                     f"Required field missing: {field}"
                 )
 
-        # -------------------------------------------------
-        # Check API key
-        # -------------------------------------------------
+    # ==========================================================
+    # QUESTION PAPER PROMPT
+    # ==========================================================
 
-        if not self.api_key:
-
-            raise ValueError(
-                "GEMINI_API_KEY is not configured. "
-                "Add your Gemini API key to the .env file."
-            )
-
-        # -------------------------------------------------
-        # Check files
-        # -------------------------------------------------
-
-        files_to_check = [
-            request["question_paper"],
-            request["answer_script"]
-        ]
-
-        if request.get("rubrics"):
-            files_to_check.append(
-                request["rubrics"]
-            )
-
-        for file_path in files_to_check:
-
-            if not os.path.exists(file_path):
-
-                raise FileNotFoundError(
-                    f"File not found: {file_path}"
-                )
-
-            extension = os.path.splitext(
-                file_path
-            )[1].lower()
-
-            if extension not in self.supported_extensions:
-
-                raise ValueError(
-                    f"Unsupported file type: {extension}"
-                )
-
-    # =====================================================
-    # QUESTION PAPER ANALYZER
-    # =====================================================
-
-    def analyze_question_paper(
+    def _question_paper_prompt(
         self,
-        file_path,
-        subject
-    ):
+        subject: str
+    ) -> str:
 
-        """
-        Extracts the question structure.
+        return f"""
+You are the Question Paper Analysis Engine of a
+high-accuracy academic evaluation system.
 
-        The question paper is the SOURCE OF TRUTH.
+The user supplied subject is:
 
-        The AI must determine:
-
-        - Subject
-        - Total marks
-        - Question numbers
-        - Question text
-        - Marks
-        - Question type
-        - Subquestions
-        """
-
-        content = self._prepare_file_content(
-            file_path
-        )
-
-        prompt = self._question_paper_prompt(
-            subject
-        )
-
-        response = self._call_gemini(
-            prompt,
-            content
-        )
-
-        data = self._parse_json_response(
-            response
-        )
-
-        # -------------------------------------------------
-        # Critical validation
-        # -------------------------------------------------
-
-        if "total_marks" not in data:
-
-            raise ValueError(
-                "Question paper analysis did not "
-                "identify total marks."
-            )
-
-        if not data.get("questions"):
-
-            raise ValueError(
-                "No questions were extracted from "
-                "the question paper."
-            )
-
-        # -------------------------------------------------
-        # Force numeric total marks
-        # -------------------------------------------------
-
-        data["total_marks"] = self._safe_number(
-            data["total_marks"]
-        )
-
-        return data
-
-    # =====================================================
-    # ANSWER SCRIPT ANALYZER
-    # =====================================================
-
-    def analyze_answer_script(
-        self,
-        file_path,
-        subject,
-        question_paper
-    ):
-
-        """
-        Analyzes handwritten answer sheets.
-
-        IMPORTANT:
-
-        The agent does NOT assume that:
-
-        Page 1 = Q1
-        Page 2 = Q2
-        Page 3 = Q3
-
-        Instead, it identifies the question number
-        written by the student.
-        """
-
-        content = self._prepare_file_content(
-            file_path
-        )
-
-        question_summary = json.dumps(
-            question_paper,
-            ensure_ascii=False,
-            indent=2
-        )
-
-        prompt = f"""
-You are the handwritten answer-script analysis
-component of an academic evaluation system.
-
-SUBJECT:
 {subject}
 
-QUESTION PAPER STRUCTURE:
-{question_summary}
+The uploaded question paper is the ONLY authoritative
+source of truth for the examination structure.
 
-Your task is to read the student's handwritten
-answer script.
+This question paper may be completely different from
+previous question papers.
 
-IMPORTANT RULES:
+You MUST analyze THIS uploaded question paper independently.
 
-1. Do NOT assume answers are written in question
-   paper order.
+==========================================================
+CRITICAL RULE 1 — SUBJECT
+==========================================================
 
-2. The student may answer:
+The subject is:
 
-   Q1
-   Q5
-   Q2
-   Q10
-   Q3
+{subject}
 
-3. Identify the actual question number written
-   by the student.
+Stay strictly within this subject.
 
-4. Detect answers across multiple pages.
+Do not introduce content from another subject.
 
-5. If an answer continues on the next page,
-   combine the pages.
+==========================================================
+CRITICAL RULE 2 — TOTAL MARKS
+==========================================================
 
-6. Do not confuse page number with question number.
+Extract the actual total marks from the uploaded
+question paper.
 
-7. Preserve mathematical expressions as accurately
-   as possible.
+NEVER assume:
 
-8. Preserve important units, formulas and equations.
+20 marks
+50 marks
+100 marks
 
-9. If handwriting is unclear, use surrounding
-   context and the question paper to interpret it.
+The total marks may be any value.
 
-10. Never invent an answer that is not reasonably
-    visible in the script.
+Examples:
+
+If the paper says:
+
+Total Marks: 20
+
+return:
+
+"total_marks": 20
+
+If the paper says:
+
+Maximum Marks: 50
+
+return:
+
+"total_marks": 50
+
+If the paper uses section totals such as:
+
+Part A = 10
+Part B = 20
+Part C = 20
+
+then calculate:
+
+total_marks = 50
+
+ONLY when the structure clearly indicates those marks
+are part of the examination total.
+
+==========================================================
+CRITICAL RULE 3 — EACH QUESTION'S MARKS
+==========================================================
+
+Extract the maximum marks assigned to EVERY question.
+
+For example:
+
+1. Define OS.                         [2]
+2. Explain process scheduling.       [5]
+3. Explain deadlock with example.    [10]
+
+Return:
+
+Question 1 → 2 marks
+Question 2 → 5 marks
+Question 3 → 10 marks
+
+DO NOT assign default marks.
+
+DO NOT assume every question has the same marks.
+
+==========================================================
+CRITICAL RULE 4 — QUESTION NUMBERS
+==========================================================
+
+Extract exact question numbers.
+
+Examples:
+
+1
+2
+3
+3(a)
+3(b)
+4(i)
+4(ii)
+10
+16
+
+Do not invent question numbers.
+
+==========================================================
+CRITICAL RULE 5 — QUESTION TEXT
+==========================================================
+
+Extract the complete question text as accurately
+as possible.
+
+Preserve important mathematical symbols,
+equations, options and technical terminology.
+
+==========================================================
+CRITICAL RULE 6 — QUESTION TYPE
+==========================================================
+
+Identify the type.
+
+Possible values:
+
+MCQ
+True/False
+Fill in the Blank
+Very Short Answer
+Short Answer
+Long Answer
+Essay
+Numerical
+Mathematical Problem
+Derivation
+Theory
+Programming
+Case Study
+Matching
+Other
+
+==========================================================
+CRITICAL RULE 7 — SECTIONS
+==========================================================
+
+Identify sections such as:
+
+Part A
+Part B
+Section I
+Section II
+Section III
+
+==========================================================
+CRITICAL RULE 8 — SUBQUESTIONS
+==========================================================
+
+Preserve subquestions separately.
+
+For example:
+
+3(a)
+3(b)
+3(c)
+
+must not be merged incorrectly.
+
+==========================================================
+CRITICAL RULE 9 — CHOICE QUESTIONS
+==========================================================
+
+Detect structures such as:
+
+Answer any 5
+Answer any 3
+Attempt either 4(a) or 4(b)
+OR
+Internal choice
+
+Preserve the choice information.
+
+==========================================================
+CRITICAL RULE 10 — NO INVENTION
+==========================================================
+
+Never invent:
+
+- questions
+- marks
+- sections
+- question numbers
+- choices
+- total marks
+
+If something cannot be read confidently,
+mark it as uncertain instead of guessing.
+
+==========================================================
+CRITICAL RULE 11 — SOURCE OF TRUTH
+==========================================================
+
+The extracted question-paper structure will control
+the entire evaluation.
+
+The answer evaluator MUST use:
+
+question.maximum_marks
+
+as the absolute maximum marks for that question.
+
+The final evaluator MUST use:
+
+question_paper.total_marks
+
+as the absolute examination total.
+
+==========================================================
+OUTPUT
+==========================================================
 
 Return ONLY valid JSON.
 
-Required format:
+Use this structure:
 
 {{
-    "answers": [
+    "subject": "{subject}",
+    "total_marks": 50,
+    "total_marks_source": "question_paper",
+    "questions": [
         {{
             "question_number": "1",
-            "answer_text": "...",
-            "page_numbers": [1, 2],
-            "confidence": 0.95
+            "question_text": "Example question",
+            "maximum_marks": 2,
+            "question_type": "MCQ",
+            "section": "Part A",
+            "subquestions": [],
+            "choice_information": null
         }}
     ]
 }}
 
-confidence must be between 0 and 1.
+IMPORTANT:
+
+total_marks MUST come from THIS uploaded paper.
+
+maximum_marks MUST come from THIS uploaded paper.
+
+Do not use marks from previous evaluations.
+
+Do not use hardcoded marks.
+
+Return ONLY JSON.
 """
+
+    # ==========================================================
+    # ANALYZE QUESTION PAPER
+    # ==========================================================
+
+    def analyze_question_paper(
+        self,
+        file_path: str,
+        subject: str
+    ) -> Dict[str, Any]:
+
+        prompt = self._question_paper_prompt(subject)
 
         response = self._call_gemini(
             prompt,
-            content
+            [file_path]
         )
 
-        data = self._parse_json_response(
+        result = self._parse_json_response(response)
+
+        return result
+
+    # ==========================================================
+    # QUESTION PAPER VALIDATION
+    # ==========================================================
+
+    def _validate_question_paper_structure(
+        self,
+        question_paper: Dict[str, Any]
+    ):
+
+        if not isinstance(question_paper, dict):
+
+            raise ValueError(
+                "Question paper analysis did not return valid data."
+            )
+
+        total_marks = question_paper.get(
+            "total_marks"
+        )
+
+        questions = question_paper.get(
+            "questions"
+        )
+
+        if total_marks is None:
+
+            raise ValueError(
+                "Unable to extract total marks from the question paper."
+            )
+
+        try:
+
+            total_marks = float(total_marks)
+
+        except Exception:
+
+            raise ValueError(
+                "Extracted total marks are invalid."
+            )
+
+        if total_marks <= 0:
+
+            raise ValueError(
+                "Question paper total marks must be greater than zero."
+            )
+
+        if not isinstance(questions, list) or not questions:
+
+            raise ValueError(
+                "No questions could be extracted from the question paper."
+            )
+
+        # Validate every question
+
+        for question in questions:
+
+            question_number = question.get(
+                "question_number"
+            )
+
+            maximum_marks = question.get(
+                "maximum_marks"
+            )
+
+            if not question_number:
+
+                raise ValueError(
+                    "A question was extracted without a question number."
+                )
+
+            if maximum_marks is None:
+
+                raise ValueError(
+                    f"Maximum marks missing for question "
+                    f"{question_number}."
+                )
+
+            try:
+
+                marks = float(maximum_marks)
+
+            except Exception:
+
+                raise ValueError(
+                    f"Invalid marks for question "
+                    f"{question_number}."
+                )
+
+            if marks < 0:
+
+                raise ValueError(
+                    f"Negative marks found for question "
+                    f"{question_number}."
+                )
+
+        question_paper["total_marks"] = total_marks
+
+    # ==========================================================
+    # ANSWER SCRIPT PROMPT
+    # ==========================================================
+
+    def _answer_script_prompt(
+        self,
+        subject: str,
+        question_paper: Dict[str, Any]
+    ) -> str:
+
+        question_structure = json.dumps(
+            question_paper,
+            indent=2,
+            ensure_ascii=False
+        )
+
+        return f"""
+You are the Answer Script Analysis Engine.
+
+Subject:
+
+{subject}
+
+The question paper below is the authoritative
+examination structure.
+
+QUESTION PAPER:
+
+{question_structure}
+
+Your task is to analyze the uploaded handwritten
+answer script.
+
+==========================================================
+IMPORTANT — ANSWERS MAY BE IN ANY ORDER
+==========================================================
+
+The student may answer questions in ANY order.
+
+Examples:
+
+Question 5
+Question 2
+Question 10
+Question 1
+Question 7
+
+OR:
+
+Q10 appears before Q3.
+
+OR:
+
+Part B is answered before Part A.
+
+Do NOT assume page order equals question order.
+
+Identify each answer using its actual question number.
+
+==========================================================
+IMPORTANT — DO NOT INVENT ANSWERS
+==========================================================
+
+Only extract answers that actually appear
+in the handwritten script.
+
+If an answer is unclear because of handwriting,
+preserve the uncertainty.
+
+==========================================================
+IMPORTANT — MATCH AGAINST QUESTION PAPER
+==========================================================
+
+Every detected answer must be matched to the
+corresponding question number from the question paper.
+
+Do not create a new question number.
+
+==========================================================
+OUTPUT
+==========================================================
+
+Return ONLY JSON:
+
+{{
+    "answers": [
+        {{
+            "question_number": "5",
+            "answer_text": "...",
+            "confidence": 0.95
+        }}
+    ]
+}}
+"""
+
+    # ==========================================================
+    # ANALYZE ANSWER SCRIPT
+    # ==========================================================
+
+    def analyze_answer_script(
+        self,
+        file_path: str,
+        subject: str,
+        question_paper: Dict[str, Any]
+    ) -> Dict[str, Any]:
+
+        prompt = self._answer_script_prompt(
+            subject,
+            question_paper
+        )
+
+        response = self._call_gemini(
+            prompt,
+            [file_path]
+        )
+
+        return self._parse_json_response(
             response
         )
 
-        if not isinstance(
-            data.get("answers"),
-            list
-        ):
+    # ==========================================================
+    # RUBRIC PROMPT
+    # ==========================================================
 
-            raise ValueError(
-                "Answer script analysis failed."
-            )
-
-        return data
-
-    # =====================================================
-    # RUBRIC ANALYZER
-    # =====================================================
-
-    def analyze_rubrics(
+    def _rubric_prompt(
         self,
-        file_path,
-        subject,
-        question_paper
-    ):
+        subject: str,
+        question_paper: Dict[str, Any]
+    ) -> str:
 
-        """
-        Rubrics are OPTIONAL.
-
-        If provided, they are used as an evaluation
-        reference.
-
-        If not provided, the evaluator creates its
-        own criteria from the question paper.
-        """
-
-        content = self._prepare_file_content(
-            file_path
-        )
-
-        question_summary = json.dumps(
+        question_structure = json.dumps(
             question_paper,
-            ensure_ascii=False,
-            indent=2
+            indent=2,
+            ensure_ascii=False
         )
 
-        prompt = f"""
-You are a rubric analysis component for an
-academic evaluation system.
+        return f"""
+You are an academic rubric analysis engine.
 
-SUBJECT:
+Subject:
+
 {subject}
 
-QUESTION PAPER:
-{question_summary}
+Question paper:
 
-Read the uploaded rubric.
+{question_structure}
 
-Extract:
+Analyze the uploaded rubric.
 
-- question number
-- marking criteria
-- expected concepts
-- marks for each criterion
-- partial marking rules
-- important keywords
-- required steps where applicable
+Map rubric criteria to the questions where possible.
 
-Do not change the maximum marks defined by the
-question paper.
+Do not change the maximum marks obtained
+from the question paper.
 
-Return ONLY valid JSON.
+If the rubric conflicts with the question paper's
+maximum marks, the question paper maximum marks
+must remain the hard upper limit.
 
-Format:
+Return ONLY JSON.
+
+Expected structure:
 
 {{
     "rubrics": [
@@ -502,7 +730,7 @@ Format:
             "criteria": [
                 {{
                     "criterion": "...",
-                    "marks": 2
+                    "marks": 1
                 }}
             ]
         }}
@@ -510,379 +738,431 @@ Format:
 }}
 """
 
+    # ==========================================================
+    # ANALYZE RUBRICS
+    # ==========================================================
+
+    def analyze_rubrics(
+        self,
+        file_path: str,
+        subject: str,
+        question_paper: Dict[str, Any]
+    ) -> Dict[str, Any]:
+
+        prompt = self._rubric_prompt(
+            subject,
+            question_paper
+        )
+
         response = self._call_gemini(
             prompt,
-            content
+            [file_path]
         )
 
         return self._parse_json_response(
             response
         )
 
-    # =====================================================
-    # ANSWER EVALUATION ENGINE
-    # =====================================================
+    # ==========================================================
+    # EVALUATION PROMPT
+    # ==========================================================
 
-    def evaluate_answers(
+    def _evaluation_prompt(
         self,
-        subject,
-        question_paper,
-        answer_script,
-        rubrics=None
-    ):
+        subject: str,
+        question_paper: Dict[str, Any],
+        answer_script: Dict[str, Any],
+        rubrics: Optional[Dict[str, Any]]
+    ) -> str:
 
-        """
-        Evaluate every question individually.
-        """
-
-        question_data = json.dumps(
+        qp_json = json.dumps(
             question_paper,
-            ensure_ascii=False,
-            indent=2
+            indent=2,
+            ensure_ascii=False
         )
 
-        answer_data = json.dumps(
+        answer_json = json.dumps(
             answer_script,
-            ensure_ascii=False,
-            indent=2
+            indent=2,
+            ensure_ascii=False
         )
 
-        rubric_data = json.dumps(
+        rubric_json = json.dumps(
             rubrics,
-            ensure_ascii=False,
-            indent=2
-        ) if rubrics else "NO RUBRICS PROVIDED"
+            indent=2,
+            ensure_ascii=False
+        ) if rubrics else "NO RUBRIC PROVIDED"
 
-        prompt = f"""
-You are an expert academic answer-sheet evaluator.
+        return f"""
+You are a high-accuracy academic answer evaluation engine.
 
 SUBJECT:
+
 {subject}
 
-==================================================
+==========================================================
 QUESTION PAPER — SOURCE OF TRUTH
-==================================================
+==========================================================
 
-{question_data}
+{qp_json}
 
-==================================================
+==========================================================
 STUDENT ANSWERS
-==================================================
+==========================================================
 
-{answer_data}
+{answer_json}
 
-==================================================
-RUBRICS
-==================================================
+==========================================================
+RUBRIC
+==========================================================
 
-{rubric_data}
+{rubric_json}
 
-==================================================
-CORE EVALUATION RULES
-==================================================
+==========================================================
+CRITICAL EVALUATION RULES
+==========================================================
 
-RULE 1 — QUESTION PAPER IS AUTHORITATIVE
+1. Evaluate ONLY according to the supplied question paper.
 
-Use the question paper as the ONLY source for:
+2. Never evaluate using a different subject.
 
-- question numbers
-- question text
+3. Never use marks from previous papers.
+
+4. Every question has its own maximum_marks.
+
+5. Award:
+
+0 <= awarded_marks <= maximum_marks
+
+6. Never exceed the maximum marks.
+
+7. Partial marks must be awarded when appropriate.
+
+8. For long-answer questions, evaluate:
+   - correctness
+   - concepts
+   - explanation
+   - relevant points
+   - examples
+   - calculations
+   - derivations
+   - conclusion
+   - presentation where academically relevant
+
+9. For numerical questions:
+   - evaluate formula
+   - substitution
+   - calculation
+   - units
+   - final answer
+   - logical steps
+
+10. For mathematical problems:
+    correct intermediate steps may receive partial marks.
+
+11. For MCQs:
+    compare the student's selected option with
+    the correct answer.
+
+12. If an answer is missing:
+    awarded_marks = 0
+
+13. If the question is unanswered, do not invent an answer.
+
+14. If the student answered questions in a different order,
+    evaluate according to QUESTION NUMBER.
+
+15. Do not penalize the student merely because
+    answers are not written sequentially.
+
+16. If rubrics are available, use them.
+
+17. If rubrics are NOT available, generate appropriate
+    evaluation criteria from the question itself.
+
+18. Feedback must be specific to the actual question.
+
+19. Never generate feedback from another subject.
+
+20. Do not blindly trust an answer-script total.
+
+==========================================================
+FEEDBACK
+==========================================================
+
+For every question provide:
+
+- question number
 - maximum marks
-- total marks
-- question type
-
-Never assume a default exam total such as 50 or 100.
-
-If the question paper is for 20 marks,
-the final maximum must be 20.
-
-RULE 2 — SUBJECT CONSISTENCY
-
-Evaluate ONLY the supplied subject:
-
-{subject}
-
-Do not use concepts from another subject.
-
-For example:
-
-If subject = Mathematics,
-do not produce Physics feedback.
-
-RULE 3 — QUESTION ORDER
-
-The student may answer questions in any order.
-
-Match answers using their detected question number.
-
-RULE 4 — UNANSWERED QUESTIONS
-
-If a question has no corresponding student answer,
-mark it as unanswered.
-
-Do not invent an answer.
-
-RULE 5 — RUBRICS
-
-If rubrics are provided, use them.
-
-If rubrics are not provided, create appropriate
-evaluation criteria from the question itself.
-
-RULE 6 — PARTIAL MARKS
-
-Award partial marks when the student demonstrates
-partial understanding.
-
-Do not automatically give zero simply because
-the final answer is incorrect.
-
-RULE 7 — LONG ANSWERS
-
-For long answers, evaluate:
-
-- conceptual correctness
-- completeness
-- relevance
-- explanation
-- important points
-- examples where required
-- formulas where required
-- conclusion where appropriate
-
-RULE 8 — 16-MARK QUESTIONS
-
-For high-mark questions, evaluate the answer
-holistically and criterion-by-criterion.
-
-Do not treat a 16-mark answer like a 1-mark answer.
-
-RULE 9 — MATHEMATICS / NUMERICAL QUESTIONS
-
-Check:
-
-- formula
-- substitution
-- calculation
-- units
-- intermediate steps
-- final answer
-
-Award appropriate partial marks when the method
-is correct but the final calculation contains
-an error.
-
-RULE 10 — MCQ
-
-For MCQs:
-
-Correct answer → full marks.
-
-Incorrect answer → zero unless the question paper
-explicitly specifies another marking scheme.
-
-RULE 11 — NO HALLUCINATION
-
-Do not invent content that is not present.
-
-RULE 12 — FEEDBACK
-
-For every attempted question provide:
-
-- marks obtained
-- maximum marks
-- correctness
-- what was done well
+- awarded marks
+- status
+- what the student did well
 - mistakes
 - missing points
-- what should have been written
+- expected answer
 - improvement suggestion
 
-==================================================
-RETURN FORMAT
-==================================================
+==========================================================
+OUTPUT
+==========================================================
 
-Return ONLY valid JSON.
+Return ONLY JSON.
 
-Use this structure:
+Use:
 
 {{
-    "questions": [
+    "evaluations": [
         {{
             "question_number": "1",
             "maximum_marks": 2,
-            "marks_obtained": 2,
-            "status": "correct",
-            "question_type": "MCQ",
-            "feedback": {{
-                "what_was_done_well": "...",
-                "mistakes": "...",
-                "missing_points": "...",
-                "expected_answer": "...",
-                "improvement": "..."
-            }}
+            "awarded_marks": 2,
+            "status": "Correct",
+            "what_was_done_well": "...",
+            "mistakes": [],
+            "missing_points": [],
+            "expected_answer": "...",
+            "improvement": "..."
         }}
     ],
-    "overall_feedback": "...",
-    "strengths": [],
-    "weaknesses": []
+    "overall_feedback": "..."
 }}
 
-IMPORTANT:
+Remember:
 
-marks_obtained MUST NEVER exceed maximum_marks.
-
-Evaluate every question from the question paper,
-including unanswered questions.
+AWARDED MARKS MUST NEVER EXCEED
+THE QUESTION'S maximum_marks.
 """
+
+    # ==========================================================
+    # EVALUATE ANSWERS
+    # ==========================================================
+
+    def evaluate_answers(
+        self,
+        subject: str,
+        question_paper: Dict[str, Any],
+        answer_script: Dict[str, Any],
+        rubrics: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+
+        prompt = self._evaluation_prompt(
+            subject,
+            question_paper,
+            answer_script,
+            rubrics
+        )
 
         response = self._call_gemini(
             prompt,
             []
         )
 
-        return self._parse_json_response(
+        result = self._parse_json_response(
             response
         )
 
-    # =====================================================
-    # FINAL RESULT CALCULATOR
-    # =====================================================
+        return result
+
+    # ==========================================================
+    # FINAL RESULT CALCULATION
+    # ==========================================================
 
     def calculate_final_result(
         self,
-        evaluation,
-        question_paper
-    ):
+        question_paper: Dict[str, Any],
+        evaluation: Dict[str, Any]
+    ) -> Dict[str, Any]:
 
-        questions = evaluation.get(
-            "questions",
+        questions = question_paper["questions"]
+
+        ai_evaluations = evaluation.get(
+            "evaluations",
             []
         )
 
-        # -------------------------------------------------
-        # Maximum marks come from question paper
-        # -------------------------------------------------
+        # Create lookup by normalized question number
 
-        maximum_marks = self._safe_number(
-            question_paper.get(
-                "total_marks",
-                0
-            )
-        )
+        evaluation_map = {}
 
-        marks_obtained = 0
+        for item in ai_evaluations:
 
-        validated_questions = []
+            q_number = str(
+                item.get("question_number", "")
+            ).strip()
+
+            evaluation_map[
+                self._normalize_question_number(q_number)
+            ] = item
+
+        final_evaluations = []
+
+        obtained_marks = 0.0
+
+        # ------------------------------------------------------
+        # IMPORTANT:
+        # Iterate through QUESTION PAPER questions.
+        # Therefore the question paper controls:
+        #
+        # - which questions exist
+        # - maximum marks
+        # - total marks
+        # ------------------------------------------------------
 
         for question in questions:
 
-            max_marks = self._safe_number(
-                question.get(
-                    "maximum_marks",
+            q_number = str(
+                question["question_number"]
+            ).strip()
+
+            maximum_marks = float(
+                question["maximum_marks"]
+            )
+
+            normalized_number = (
+                self._normalize_question_number(
+                    q_number
+                )
+            )
+
+            ai_item = evaluation_map.get(
+                normalized_number
+            )
+
+            if ai_item:
+
+                raw_awarded = ai_item.get(
+                    "awarded_marks",
                     0
                 )
-            )
 
-            obtained = self._safe_number(
-                question.get(
-                    "marks_obtained",
-                    0
+                try:
+
+                    awarded_marks = float(
+                        raw_awarded
+                    )
+
+                except Exception:
+
+                    awarded_marks = 0.0
+
+                # HARD SAFETY LIMIT
+
+                awarded_marks = max(
+                    0.0,
+                    min(
+                        awarded_marks,
+                        maximum_marks
+                    )
                 )
-            )
 
-            # ---------------------------------------------
-            # Prevent impossible marks
-            # ---------------------------------------------
-
-            obtained = max(
-                0,
-                min(
-                    obtained,
-                    max_marks
+                final_item = dict(
+                    ai_item
                 )
+
+                final_item[
+                    "question_number"
+                ] = q_number
+
+                final_item[
+                    "maximum_marks"
+                ] = maximum_marks
+
+                final_item[
+                    "awarded_marks"
+                ] = awarded_marks
+
+            else:
+
+                # Question exists in paper but
+                # no corresponding answer was detected.
+
+                awarded_marks = 0.0
+
+                final_item = {
+                    "question_number": q_number,
+                    "maximum_marks": maximum_marks,
+                    "awarded_marks": 0.0,
+                    "status": "Not Answered",
+                    "what_was_done_well": "",
+                    "mistakes": [],
+                    "missing_points": [
+                        "No answer detected for this question."
+                    ],
+                    "expected_answer": "",
+                    "improvement": (
+                        "Attempt the question and provide "
+                        "the required explanation."
+                    )
+                }
+
+            obtained_marks += awarded_marks
+
+            final_evaluations.append(
+                final_item
             )
 
-            question["maximum_marks"] = max_marks
+        # ------------------------------------------------------
+        # QUESTION PAPER TOTAL — SOURCE OF TRUTH
+        # ------------------------------------------------------
 
-            question["marks_obtained"] = obtained
-
-            marks_obtained += obtained
-
-            validated_questions.append(
-                question
-            )
-
-        # -------------------------------------------------
-        # Never allow obtained marks > total marks
-        # -------------------------------------------------
-
-        marks_obtained = min(
-            marks_obtained,
-            maximum_marks
+        total_marks = float(
+            question_paper["total_marks"]
         )
 
-        # -------------------------------------------------
+        # ------------------------------------------------------
+        # SECOND SAFETY LIMIT
+        # ------------------------------------------------------
+
+        obtained_marks = min(
+            obtained_marks,
+            total_marks
+        )
+
+        # ------------------------------------------------------
         # Percentage
-        # -------------------------------------------------
+        # ------------------------------------------------------
 
-        if maximum_marks > 0:
+        percentage = (
+            obtained_marks / total_marks
+        ) * 100
 
-            percentage = (
-                marks_obtained /
-                maximum_marks
-            ) * 100
-
-        else:
-
-            percentage = 0
-
-        # -------------------------------------------------
+        # ------------------------------------------------------
         # Grade
-        # -------------------------------------------------
+        # ------------------------------------------------------
 
         grade = self._calculate_grade(
             percentage
         )
 
         return {
-            "maximum_marks": maximum_marks,
-
-            "marks_obtained": round(
-                marks_obtained,
-                2
+            "maximum_marks": self._clean_number(
+                total_marks
             ),
-
+            "marks_obtained": self._clean_number(
+                obtained_marks
+            ),
             "percentage": round(
                 percentage,
                 2
             ),
-
             "grade": grade,
-
-            "questions": validated_questions,
-
-            "overall_feedback": evaluation.get(
-                "overall_feedback",
-                ""
-            ),
-
-            "strengths": evaluation.get(
-                "strengths",
-                []
-            ),
-
-            "weaknesses": evaluation.get(
-                "weaknesses",
-                []
-            )
+            "question_wise_evaluation":
+                final_evaluations,
+            "overall_feedback":
+                evaluation.get(
+                    "overall_feedback",
+                    ""
+                )
         }
 
-    # =====================================================
-    # GRADE CALCULATOR
-    # =====================================================
+    # ==========================================================
+    # GRADE CALCULATION
+    # ==========================================================
 
-    def _calculate_grade(self, percentage):
+    def _calculate_grade(
+        self,
+        percentage: float
+    ) -> str:
 
         if percentage >= 90:
             return "A+"
@@ -904,108 +1184,56 @@ including unanswered questions.
 
         return "F"
 
-    # =====================================================
-    # FILE PROCESSING
-    # =====================================================
+    # ==========================================================
+    # QUESTION NUMBER NORMALIZATION
+    # ==========================================================
 
-    def _prepare_file_content(
+    def _normalize_question_number(
         self,
-        file_path
-    ):
+        question_number: str
+    ) -> str:
 
-        """
-        Convert uploaded files into content that can
-        be sent to the multimodal AI model.
+        value = str(
+            question_number
+        ).strip().lower()
 
-        PDFs are sent as PDF data.
-
-        Images are sent as base64 image data.
-        """
-
-        extension = os.path.splitext(
-            file_path
-        )[1].lower()
-
-        file_size = os.path.getsize(
-            file_path
+        value = value.replace(
+            "question",
+            ""
         )
 
-        if file_size > self.max_file_size:
-
-            raise ValueError(
-                "File exceeds the maximum allowed size."
-            )
-
-        if extension == ".pdf":
-
-            return [{
-                "inline_data": {
-                    "mime_type": "application/pdf",
-                    "data": self._encode_file(
-                        file_path
-                    )
-                }
-            }]
-
-        if extension in {
-            ".jpg",
-            ".jpeg",
-            ".png"
-        }:
-
-            mime_type = mimetypes.guess_type(
-                file_path
-            )[0]
-
-            if not mime_type:
-
-                mime_type = "image/jpeg"
-
-            return [{
-                "inline_data": {
-                    "mime_type": mime_type,
-                    "data": self._encode_file(
-                        file_path
-                    )
-                }
-            }]
-
-        raise ValueError(
-            "Unsupported file format."
+        value = value.replace(
+            "q.",
+            ""
         )
 
-    # =====================================================
-    # FILE ENCODING
-    # =====================================================
+        value = value.replace(
+            "q",
+            ""
+        )
 
-    def _encode_file(
-        self,
-        file_path
-    ):
+        value = value.replace(
+            " ",
+            ""
+        )
 
-        with open(
-            file_path,
-            "rb"
-        ) as file:
+        return value
 
-            return base64.b64encode(
-                file.read()
-            ).decode("utf-8")
-
-    # =====================================================
+    # ==========================================================
     # GEMINI API CALL
-    # =====================================================
+    # ==========================================================
 
     def _call_gemini(
         self,
-        prompt,
-        file_content
-    ):
+        prompt: str,
+        file_paths: List[str]
+    ) -> str:
 
-        """
-        Send prompt + document/image content
-        to Gemini.
-        """
+        if not self.api_key:
+
+            raise ValueError(
+                "GEMINI_API_KEY is not configured."
+            )
 
         parts = [
             {
@@ -1013,17 +1241,42 @@ including unanswered questions.
             }
         ]
 
-        # Add uploaded document/image content
-        if file_content:
+        for file_path in file_paths:
 
-            parts.extend(
-                file_content
+            if not file_path:
+                continue
+
+            if not os.path.exists(file_path):
+
+                raise FileNotFoundError(
+                    f"File not found: {file_path}"
+                )
+
+            mime_type = self._get_mime_type(
+                file_path
+            )
+
+            with open(
+                file_path,
+                "rb"
+            ) as file:
+
+                encoded = base64.b64encode(
+                    file.read()
+                ).decode("utf-8")
+
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": encoded
+                    }
+                }
             )
 
         payload = {
             "contents": [
                 {
-                    "role": "user",
                     "parts": parts
                 }
             ],
@@ -1042,17 +1295,12 @@ including unanswered questions.
             self.api_url,
             headers=headers,
             json=payload,
-            timeout=180
+            timeout=self.timeout
         )
 
-        # -------------------------------------------------
-        # API error handling
-        # -------------------------------------------------
-
-        if response.status_code != 200:
+        if not response.ok:
 
             try:
-
                 error_data = response.json()
 
             except Exception:
@@ -1060,31 +1308,20 @@ including unanswered questions.
                 error_data = response.text
 
             raise RuntimeError(
-                "Gemini API error: "
+                f"Gemini API error "
+                f"{response.status_code}: "
                 f"{error_data}"
             )
 
         data = response.json()
 
-        # -------------------------------------------------
-        # Extract generated text
-        # -------------------------------------------------
-
         try:
 
-            candidates = data[
-                "candidates"
-            ]
-
-            text = candidates[0][
-                "content"
-            ][
-                "parts"
-            ][0][
-                "text"
-            ]
-
-            return text
+            return (
+                data["candidates"][0]
+                ["content"]["parts"][0]
+                ["text"]
+            )
 
         except (
             KeyError,
@@ -1093,35 +1330,28 @@ including unanswered questions.
         ):
 
             raise RuntimeError(
-                "Unexpected response received "
-                "from Gemini API."
+                "Gemini returned an unexpected response."
             )
 
-    # =====================================================
+    # ==========================================================
     # JSON PARSER
-    # =====================================================
+    # ==========================================================
 
     def _parse_json_response(
         self,
-        response
-    ):
+        response: str
+    ) -> Dict[str, Any]:
 
-        """
-        Clean and parse JSON returned by AI.
-        """
+        if not response:
 
-        if isinstance(
-            response,
-            dict
-        ):
-
-            return response
+            raise ValueError(
+                "AI returned an empty response."
+            )
 
         text = response.strip()
 
-        # -------------------------------------------------
-        # Remove markdown code fences
-        # -------------------------------------------------
+        # Remove markdown code fences if Gemini
+        # returns them despite instructions.
 
         text = re.sub(
             r"^```json\s*",
@@ -1142,8 +1372,6 @@ including unanswered questions.
             text
         )
 
-        text = text.strip()
-
         try:
 
             return json.loads(
@@ -1152,9 +1380,7 @@ including unanswered questions.
 
         except json.JSONDecodeError:
 
-            # ---------------------------------------------
-            # Attempt to find JSON object
-            # ---------------------------------------------
+            # Attempt to locate JSON object
 
             start = text.find("{")
             end = text.rfind("}")
@@ -1178,32 +1404,56 @@ including unanswered questions.
                 "AI returned invalid JSON."
             )
 
-    # =====================================================
-    # NUMBER CONVERSION
-    # =====================================================
+    # ==========================================================
+    # MIME TYPE
+    # ==========================================================
 
-    def _safe_number(
+    def _get_mime_type(
         self,
-        value
+        file_path: str
+    ) -> str:
+
+        extension = (
+            os.path.splitext(
+                file_path
+            )[1]
+            .lower()
+        )
+
+        mime_types = {
+
+            ".pdf":
+                "application/pdf",
+
+            ".jpg":
+                "image/jpeg",
+
+            ".jpeg":
+                "image/jpeg",
+
+            ".png":
+                "image/png"
+        }
+
+        return mime_types.get(
+            extension,
+            "application/octet-stream"
+        )
+
+    # ==========================================================
+    # CLEAN NUMBER
+    # ==========================================================
+
+    def _clean_number(
+        self,
+        value: float
     ):
 
-        try:
+        if float(value).is_integer():
 
-            if isinstance(
-                value,
-                str
-            ):
+            return int(value)
 
-                value = value.replace(
-                    ",",
-                    ""
-                ).strip()
-
-            return float(value)
-
-        except (
-            ValueError,
-            TypeError
-        ):
-
-            return 0
+        return round(
+            float(value),
+            2
+        )
