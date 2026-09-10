@@ -29,7 +29,7 @@ class EvaluationAgent:
         # AI Configuration
         # -------------------------------------------------
 
-        self.api_key = os.getenv("GEMINI_API_KEY_2")
+        self.api_key = os.getenv("Gemini_API_Key")
 
         self.model = os.getenv(
             "GEMINI_MODEL",
