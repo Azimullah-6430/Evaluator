@@ -33,7 +33,7 @@ class EvaluationAgent:
 
         self.model = os.getenv(
             "GEMINI_MODEL",
-            "gemini-3.4-flash"
+            "gemini-3.5-flash"
         )
 
         self.api_url = (
