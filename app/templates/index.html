@@ -798,29 +798,26 @@
 
         function displayResult(result) {
 
+            // Backend returns: obtained_marks, total_marks, percentage, grade
             document.getElementById(
                 "maximumMarks"
             ).textContent =
-                result.maximum_marks ?? 0;
-
+                result.total_marks ?? 0;
 
             document.getElementById(
                 "marksObtained"
             ).textContent =
-                result.marks_obtained ?? 0;
-
+                result.obtained_marks ?? 0;
 
             document.getElementById(
                 "percentage"
             ).textContent =
                 (result.percentage ?? 0) + "%";
 
-
             document.getElementById(
                 "grade"
             ).textContent =
                 result.grade ?? "-";
-
 
             document.getElementById(
                 "overallFeedback"
@@ -830,227 +827,164 @@
 
 
             // ---------------------------------------------
-            // Strengths
+            // Collect strengths and weaknesses from
+            // per-question feedback since the backend does
+            // not return top-level strengths/weaknesses.
             // ---------------------------------------------
 
             const strengthsList =
-                document.getElementById(
-                    "strengthsList"
-                );
-
+                document.getElementById("strengthsList");
             strengthsList.innerHTML = "";
 
-            const strengths =
-                result.strengths || [];
+            const weaknessesList =
+                document.getElementById("weaknessesList");
+            weaknessesList.innerHTML = "";
 
-            if (strengths.length === 0) {
+            const evaluations = result.evaluations || [];
 
-                const item =
-                    document.createElement("li");
+            // Gather all "what_was_done_well" items as strengths
+            const allStrengths = [];
+            const allWeaknesses = [];
 
-                item.textContent =
-                    "No strengths were listed.";
+            evaluations.forEach(function (ev) {
+                const fb = ev.feedback || {};
+                const well = fb.what_was_done_well || [];
+                const missing = fb.missing_points || [];
+                (Array.isArray(well) ? well : [well]).forEach(function (s) {
+                    if (s) allStrengths.push("Q" + ev.question_number + ": " + s);
+                });
+                (Array.isArray(missing) ? missing : [missing]).forEach(function (s) {
+                    if (s) allWeaknesses.push("Q" + ev.question_number + ": " + s);
+                });
+            });
 
+            if (allStrengths.length === 0) {
+                const item = document.createElement("li");
+                item.textContent = "No strengths were listed.";
                 strengthsList.appendChild(item);
-
             } else {
+                allStrengths.forEach(function (s) {
+                    const item = document.createElement("li");
+                    item.textContent = s;
+                    strengthsList.appendChild(item);
+                });
+            }
 
-                strengths.forEach(
-                    function (strength) {
-
-                        const item =
-                            document.createElement("li");
-
-                        item.textContent = strength;
-
-                        strengthsList.appendChild(item);
-
-                    }
-                );
+            if (allWeaknesses.length === 0) {
+                const item = document.createElement("li");
+                item.textContent = "No areas for improvement listed.";
+                weaknessesList.appendChild(item);
+            } else {
+                allWeaknesses.forEach(function (s) {
+                    const item = document.createElement("li");
+                    item.textContent = s;
+                    weaknessesList.appendChild(item);
+                });
             }
 
 
             // ---------------------------------------------
-            // Weaknesses
+            // Evaluation Notes
             // ---------------------------------------------
-
-            const weaknessesList =
-                document.getElementById(
-                    "weaknessesList"
-                );
-
-            weaknessesList.innerHTML = "";
-
-            const weaknesses =
-                result.weaknesses || [];
-
-            if (weaknesses.length === 0) {
-
-                const item =
-                    document.createElement("li");
-
-                item.textContent =
-                    "No weaknesses were listed.";
-
-                weaknessesList.appendChild(item);
-
-            } else {
-
-                weaknesses.forEach(
-                    function (weakness) {
-
-                        const item =
-                            document.createElement("li");
-
-                        item.textContent = weakness;
-
-                        weaknessesList.appendChild(item);
-
-                    }
-                );
+            const notes = result.evaluation_notes || [];
+            if (notes.length > 0) {
+                const notesDiv = document.createElement("div");
+                notesDiv.className = "list-box";
+                notesDiv.style.marginTop = "15px";
+                notesDiv.innerHTML = "<h3>Evaluation Notes</h3><ul id='notesList'></ul>";
+                const ul = notesDiv.querySelector("ul");
+                notes.forEach(function (n) {
+                    const li = document.createElement("li");
+                    li.textContent = n;
+                    ul.appendChild(li);
+                });
+                document.getElementById("questionsContainer").before(notesDiv);
             }
 
 
             // ---------------------------------------------
             // Question-wise Results
+            // Backend returns result.evaluations (not .questions)
+            // Each entry has: question_number, awarded_marks,
+            // maximum_marks, question_type, optional_status,
+            // answer_present, feedback{}
             // ---------------------------------------------
 
             const questionsContainer =
-                document.getElementById(
-                    "questionsContainer"
-                );
-
+                document.getElementById("questionsContainer");
             questionsContainer.innerHTML = "";
 
-            const questions =
-                result.questions || [];
+            evaluations.forEach(function (ev) {
 
+                const feedback = ev.feedback || {};
 
-            questions.forEach(
-                function (question) {
+                const questionBox = document.createElement("div");
+                questionBox.className = "question-result";
 
-                    const feedback =
-                        question.feedback || {};
-
-                    const questionBox =
-                        document.createElement("div");
-
-                    questionBox.className =
-                        "question-result";
-
-
-                    questionBox.innerHTML = `
-
-                        <div class="question-top">
-
-                            <div>
-
-                                <div class="question-number">
-                                    Question
-                                    ${escapeHTML(
-                                        question.question_number ?? "-"
-                                    )}
-                                </div>
-
-                                <div>
-                                    Type:
-                                    ${escapeHTML(
-                                        question.question_type ??
-                                        "Not specified"
-                                    )}
-                                </div>
-
-                                <div>
-                                    Status:
-                                    ${escapeHTML(
-                                        question.status ??
-                                        "Not specified"
-                                    )}
-                                </div>
-
-                            </div>
-
-                            <div class="marks">
-                                ${escapeHTML(
-                                    question.marks_obtained ?? 0
-                                )}
-                                /
-                                ${escapeHTML(
-                                    question.maximum_marks ?? 0
-                                )}
-                            </div>
-
-                        </div>
-
-
-                        <div class="feedback-item">
-                            <strong>
-                                What was done well
-                            </strong>
-
-                            ${escapeHTML(
-                                feedback.what_was_done_well ||
-                                "No feedback available."
-                            )}
-                        </div>
-
-
-                        <div class="feedback-item">
-                            <strong>
-                                Mistakes
-                            </strong>
-
-                            ${escapeHTML(
-                                feedback.mistakes ||
-                                "No major mistakes mentioned."
-                            )}
-                        </div>
-
-
-                        <div class="feedback-item">
-                            <strong>
-                                Missing Points
-                            </strong>
-
-                            ${escapeHTML(
-                                feedback.missing_points ||
-                                "No missing points mentioned."
-                            )}
-                        </div>
-
-
-                        <div class="feedback-item">
-                            <strong>
-                                Expected Answer
-                            </strong>
-
-                            ${escapeHTML(
-                                feedback.expected_answer ||
-                                "Not available."
-                            )}
-                        </div>
-
-
-                        <div class="feedback-item">
-                            <strong>
-                                How to Improve
-                            </strong>
-
-                            ${escapeHTML(
-                                feedback.improvement ||
-                                "No improvement suggestion available."
-                            )}
-                        </div>
-
-                    `;
-
-                    questionsContainer.appendChild(
-                        questionBox
-                    );
-
+                // Render array fields as bullet lists
+                function renderList(val, fallback) {
+                    const arr = Array.isArray(val) ? val : (val ? [val] : []);
+                    if (arr.length === 0) return escapeHTML(fallback);
+                    return "<ul style='padding-left:18px;margin:4px 0'>" +
+                        arr.map(function (x) {
+                            return "<li>" + escapeHTML(String(x)) + "</li>";
+                        }).join("") +
+                        "</ul>";
                 }
-            );
 
+                const statusLabel = ev.optional_status
+                    ? ev.optional_status.replace(/_/g, " ")
+                    : (ev.answer_present ? "answered" : "not answered");
+
+                questionBox.innerHTML =
+                    "<div class='question-top'>" +
+                        "<div>" +
+                            "<div class='question-number'>Question " +
+                                escapeHTML(ev.question_number ?? "-") +
+                            "</div>" +
+                            "<div>Type: " +
+                                escapeHTML(ev.question_type || "Not specified") +
+                            "</div>" +
+                            "<div>Status: " + escapeHTML(statusLabel) + "</div>" +
+                            (ev.answer_summary
+                                ? "<div style='margin-top:6px;font-size:13px;color:#374151'>" +
+                                  escapeHTML(ev.answer_summary) + "</div>"
+                                : "") +
+                        "</div>" +
+                        "<div class='marks'>" +
+                            escapeHTML(ev.awarded_marks ?? 0) +
+                            " / " +
+                            escapeHTML(ev.maximum_marks ?? 0) +
+                        "</div>" +
+                    "</div>" +
+
+                    "<div class='feedback-item'>" +
+                        "<strong>What was done well</strong>" +
+                        renderList(feedback.what_was_done_well, "No feedback available.") +
+                    "</div>" +
+
+                    "<div class='feedback-item'>" +
+                        "<strong>Missing Points</strong>" +
+                        renderList(feedback.missing_points, "No missing points mentioned.") +
+                    "</div>" +
+
+                    "<div class='feedback-item'>" +
+                        "<strong>Expected Answer</strong>" +
+                        escapeHTML(feedback.expected_answer || "Not available.") +
+                    "</div>" +
+
+                    "<div class='feedback-item'>" +
+                        "<strong>How to Improve</strong>" +
+                        escapeHTML(feedback.improvement || "No improvement suggestion available.") +
+                    "</div>";
+
+                questionsContainer.appendChild(questionBox);
+            });
+
+            if (evaluations.length === 0) {
+                questionsContainer.innerHTML =
+                    "<p style='color:#6b7280'>No per-question data returned.</p>";
+            }
 
             // Show result section
             resultSection.style.display = "block";
