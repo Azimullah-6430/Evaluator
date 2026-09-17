@@ -1,142 +1,242 @@
+"""
+LearnSphere AI - Smart Education Evaluation Application
+
+Main Flask application.
+
+Features:
+- Teacher/student evaluation API
+- Handwritten answer-script evaluation
+- Question-paper based maximum-mark detection
+- Optional rubrics
+- Strict plagiarism detection
+- Health check
+- JSON error responses
+"""
+
+from __future__ import annotations
+
+import logging
 import os
 import traceback
+from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 from app.evaluation.evaluator import EvaluationAgent
+from app.plagiarism import PlagiarismDetector
 
 
-# ==========================================================
-# LOAD ENVIRONMENT VARIABLES
-# ==========================================================
+# ============================================================
+# ENVIRONMENT
+# ============================================================
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
 
-
-# ==========================================================
-# CREATE FLASK APP
-# ==========================================================
-
-app = Flask(__name__)
+load_dotenv(override=True)
 
 
-# ==========================================================
-# UPLOAD CONFIGURATION
-# ==========================================================
+# ============================================================
+# LOGGING
+# ============================================================
 
-BASE_DIR = os.path.abspath(
-    os.path.dirname(__file__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-UPLOAD_FOLDER = os.path.join(
-    BASE_DIR,
-    "uploads"
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# FLASK APPLICATION
+# ============================================================
+
+app = Flask(
+    __name__,
+    template_folder=str(BASE_DIR / "templates"),
 )
+
+
+# ============================================================
+# APPLICATION CONFIGURATION
+# ============================================================
+
+UPLOAD_FOLDER = BASE_DIR / "uploads"
+
+UPLOAD_FOLDER.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
+
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
+
 
 ALLOWED_EXTENSIONS = {
     "pdf",
     "jpg",
     "jpeg",
-    "png"
+    "png",
 }
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# Maximum upload size = 50 MB
-app.config["MAX_CONTENT_LENGTH"] = (
-    50 * 1024 * 1024
-)
-
-os.makedirs(
-    UPLOAD_FOLDER,
-    exist_ok=True
-)
-
-
-# ==========================================================
-# CREATE EVALUATION AGENT
-# ==========================================================
+# ============================================================
+# AGENTS
+# ============================================================
 
 evaluation_agent = EvaluationAgent()
 
+plagiarism_detector = PlagiarismDetector()
 
-# ==========================================================
-# FILE VALIDATION
-# ==========================================================
 
-def allowed_file(filename):
+# ============================================================
+# HELPERS
+# ============================================================
 
-    return (
-        "." in filename
-        and
-        filename.rsplit(
-            ".",
-            1
-        )[1].lower()
-        in ALLOWED_EXTENSIONS
+def allowed_file(filename: str) -> bool:
+    """
+    Check whether an uploaded filename has a supported extension.
+    """
+
+    if not filename:
+        return False
+
+    if "." not in filename:
+        return False
+
+    extension = filename.rsplit(".", 1)[1].lower()
+
+    return extension in ALLOWED_EXTENSIONS
+
+
+def save_uploaded_file(
+    uploaded_file,
+    prefix: str,
+) -> str:
+    """
+    Safely save an uploaded file and return its absolute path.
+    """
+
+    if uploaded_file is None:
+        raise ValueError(
+            "No file was supplied."
+        )
+
+    if not uploaded_file.filename:
+        raise ValueError(
+            "Uploaded file has no filename."
+        )
+
+    filename = secure_filename(
+        uploaded_file.filename
     )
 
+    if not filename:
+        raise ValueError(
+            "Invalid filename."
+        )
 
-# ==========================================================
-# HOME PAGE
-# ==========================================================
+    if not allowed_file(filename):
+        raise ValueError(
+            f"Unsupported file format: {filename}"
+        )
 
-@app.route("/")
+    extension = Path(filename).suffix.lower()
+
+    # Add a prefix so question paper and answer script filenames
+    # cannot accidentally overwrite one another.
+    safe_name = (
+        f"{prefix}_{filename}"
+    )
+
+    destination = (
+        UPLOAD_FOLDER / safe_name
+    )
+
+    uploaded_file.save(
+        str(destination)
+    )
+
+    return str(destination)
+
+
+# ============================================================
+# HOME
+# ============================================================
+
+@app.route("/", methods=["GET"])
 def home():
+    """
+    Render the main frontend.
+    """
 
     return render_template(
         "index.html"
     )
 
 
-# ==========================================================
-# EVALUATION API
-# ==========================================================
+# ============================================================
+# EVALUATION
+# ============================================================
 
 @app.route(
     "/evaluate",
-    methods=["POST"]
+    methods=["POST"],
 )
 def evaluate():
+    """
+    Evaluate a student's handwritten answer script and then perform
+    strict complete-script plagiarism detection.
+    """
 
     try:
 
-        print(
-            "\n======================================"
+        # --------------------------------------------------------
+        # 1. Read student information
+        # --------------------------------------------------------
+
+        subject = (
+            request.form.get(
+                "subject",
+                "",
+            )
+            .strip()
         )
 
-        print(
-            "STARTING NEW EVALUATION"
+        student_name = (
+            request.form.get(
+                "student_name",
+                "",
+            )
+            .strip()
         )
 
-        print(
-            "======================================"
+        roll_number = (
+            request.form.get(
+                "roll_number",
+                "",
+            )
+            .strip()
         )
 
-        # --------------------------------------------------
-        # GET FORM DATA
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 2. Validate required student information
+        # --------------------------------------------------------
 
-        subject = request.form.get(
-            "subject",
-            ""
-        ).strip()
+        if not subject:
+            return jsonify({
+                "success": False,
+                "error": "Subject is required.",
+            }), 400
 
-        student_name = request.form.get(
-            "student_name",
-            ""
-        ).strip()
+        # student_name and roll_number are optional but used for plagiarism detection
 
-        roll_number = request.form.get(
-            "roll_number",
-            ""
-        ).strip()
-
-        # --------------------------------------------------
-        # GET FILES
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 3. Read uploaded files
+        # --------------------------------------------------------
 
         question_paper = request.files.get(
             "question_paper"
@@ -150,410 +250,348 @@ def evaluate():
             "rubrics"
         )
 
-        # --------------------------------------------------
-        # LOG BASIC INFORMATION
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 4. Validate required files
+        # --------------------------------------------------------
 
-        print(
-            "Subject:",
-            subject
-        )
-
-        print(
-            "Student:",
-            student_name
-        )
-
-        print(
-            "Roll Number:",
-            roll_number
-        )
-
-        # --------------------------------------------------
-        # VALIDATE SUBJECT
-        # --------------------------------------------------
-
-        if not subject:
-
+        if question_paper is None:
             return jsonify({
-
                 "success": False,
-
-                "error":
-                    "Subject is required."
-
+                "error": "Question paper is required.",
             }), 400
 
-        # --------------------------------------------------
-        # VALIDATE QUESTION PAPER
-        # --------------------------------------------------
-
-        if not question_paper:
-
+        if answer_script is None:
             return jsonify({
-
                 "success": False,
-
-                "error":
-                    "Question paper is required."
-
+                "error": "Answer script is required.",
             }), 400
+
+        # --------------------------------------------------------
+        # 5. Validate filenames
+        # --------------------------------------------------------
 
         if not question_paper.filename:
-
             return jsonify({
-
                 "success": False,
-
-                "error":
-                    "Question paper filename is missing."
-
-            }), 400
-
-        if not allowed_file(
-            question_paper.filename
-        ):
-
-            return jsonify({
-
-                "success": False,
-
-                "error":
-                    "Unsupported question paper format. "
-                    "Use PDF, JPG, JPEG or PNG."
-
-            }), 400
-
-        # --------------------------------------------------
-        # VALIDATE ANSWER SCRIPT
-        # --------------------------------------------------
-
-        if not answer_script:
-
-            return jsonify({
-
-                "success": False,
-
-                "error":
-                    "Answer script is required."
-
+                "error": "Question paper filename is missing.",
             }), 400
 
         if not answer_script.filename:
-
             return jsonify({
-
                 "success": False,
+                "error": "Answer script filename is missing.",
+            }), 400
 
-                "error":
-                    "Answer script filename is missing."
-
+        if not allowed_file(
+            question_paper.filename
+        ):
+            return jsonify({
+                "success": False,
+                "error": (
+                    "Unsupported question paper format. "
+                    "Use PDF, JPG, JPEG or PNG."
+                ),
             }), 400
 
         if not allowed_file(
             answer_script.filename
         ):
-
             return jsonify({
-
                 "success": False,
-
-                "error":
+                "error": (
                     "Unsupported answer script format. "
                     "Use PDF, JPG, JPEG or PNG."
-
+                ),
             }), 400
 
-        # --------------------------------------------------
-        # SAVE QUESTION PAPER
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 6. Save question paper
+        # --------------------------------------------------------
 
-        qp_filename = secure_filename(
-            question_paper.filename
+        qp_path = save_uploaded_file(
+            question_paper,
+            "question_paper",
         )
 
-        qp_path = os.path.join(
-            app.config["UPLOAD_FOLDER"],
-            qp_filename
+        # --------------------------------------------------------
+        # 7. Save answer script
+        # --------------------------------------------------------
+
+        answer_path = save_uploaded_file(
+            answer_script,
+            "answer_script",
         )
 
-        question_paper.save(
-            qp_path
-        )
-
-        print(
-            "Question Paper Saved:",
-            qp_path
-        )
-
-        # --------------------------------------------------
-        # SAVE ANSWER SCRIPT
-        # --------------------------------------------------
-
-        answer_filename = secure_filename(
-            answer_script.filename
-        )
-
-        answer_path = os.path.join(
-            app.config["UPLOAD_FOLDER"],
-            answer_filename
-        )
-
-        answer_script.save(
-            answer_path
-        )
-
-        print(
-            "Answer Script Saved:",
-            answer_path
-        )
-
-        # --------------------------------------------------
-        # SAVE OPTIONAL RUBRICS
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 8. Save optional rubrics
+        # --------------------------------------------------------
 
         rubric_path = None
 
         if (
-            rubrics
-            and
-            rubrics.filename
+            rubrics is not None
+            and rubrics.filename
         ):
 
             if not allowed_file(
                 rubrics.filename
             ):
-
                 return jsonify({
-
                     "success": False,
-
-                    "error":
+                    "error": (
                         "Unsupported rubrics format. "
                         "Use PDF, JPG, JPEG or PNG."
-
+                    ),
                 }), 400
 
-            rubric_filename = secure_filename(
-                rubrics.filename
+            rubric_path = save_uploaded_file(
+                rubrics,
+                "rubrics",
             )
 
-            rubric_path = os.path.join(
-                app.config["UPLOAD_FOLDER"],
-                rubric_filename
-            )
-
-            rubrics.save(
-                rubric_path
-            )
-
-            print(
-                "Rubrics Saved:",
-                rubric_path
-            )
-
-        else:
-
-            print(
-                "No rubrics uploaded. "
-                "AI will generate evaluation criteria."
-            )
-
-        # --------------------------------------------------
-        # BUILD EVALUATION REQUEST
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 9. Build evaluation request
+        # --------------------------------------------------------
 
         evaluation_request = {
+            "subject": subject,
 
-            "subject":
-                subject,
+            "student_name": student_name,
 
-            "student_name":
-                student_name,
+            "roll_number": roll_number,
 
-            "roll_number":
-                roll_number,
+            "question_paper": qp_path,
 
-            "question_paper":
-                qp_path,
+            "answer_script": answer_path,
 
-            "answer_script":
-                answer_path,
-
-            "rubrics":
-                rubric_path
+            "rubrics": rubric_path,
         }
 
-        print(
-            "\n--------------------------------------"
+        logger.info(
+            "Starting evaluation for student=%s roll=%s subject=%s",
+            student_name,
+            roll_number,
+            subject,
         )
 
-        print(
-            "SENDING REQUEST TO EVALUATION AGENT"
-        )
-
-        print(
-            "--------------------------------------"
-        )
-
-        # --------------------------------------------------
-        # RUN EVALUATION AGENT
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 10. Run Evaluation Agent
+        # --------------------------------------------------------
 
         result = evaluation_agent.evaluate(
             evaluation_request
         )
 
-        print(
-            "\n--------------------------------------"
+        logger.info(
+            "Evaluation completed for student=%s roll=%s",
+            student_name,
+            roll_number,
         )
 
-        print(
-            "EVALUATION COMPLETED SUCCESSFULLY"
+        # --------------------------------------------------------
+        # 11. Run Plagiarism Detection Agent
+        # --------------------------------------------------------
+        #
+        # IMPORTANT:
+        #
+        # The question paper is passed only to identify the
+        # examination.
+        #
+        # It is NOT treated as student answer content.
+        #
+        # The plagiarism detector compares the COMPLETE answer
+        # script.
+        # --------------------------------------------------------
+
+        plagiarism_result = (
+            plagiarism_detector.check(
+                student_name=student_name,
+
+                roll_number=roll_number,
+
+                subject=subject,
+
+                answer_script=answer_path,
+
+                question_paper=qp_path,
+            )
         )
 
-        print(
-            "--------------------------------------"
+        logger.info(
+            "Plagiarism check completed for "
+            "student=%s roll=%s suspected=%s",
+            student_name,
+            roll_number,
+            plagiarism_result.get(
+                "suspected",
+                False,
+            ),
         )
 
-        # --------------------------------------------------
-        # RETURN SUCCESS JSON
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 12. Return combined result
+        # --------------------------------------------------------
 
         return jsonify({
+            "success": True,
 
-            "success":
-                True,
+            "result": result,
 
-            "result":
-                result
-
+            "plagiarism": plagiarism_result,
         }), 200
 
-    except Exception as error:
+    except Exception as exc:
 
-        # --------------------------------------------------
-        # PRINT COMPLETE ERROR TO RENDER LOG
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # Log complete traceback on server
+        # --------------------------------------------------------
 
-        print(
-            "\n======================================"
+        logger.error(
+            "Evaluation request failed: %s",
+            str(exc),
         )
 
-        print(
-            "EVALUATION ERROR"
+        logger.error(
+            traceback.format_exc()
         )
 
-        print(
-            "======================================"
-        )
-
-        print(
-            "Error:",
-            str(error)
-        )
-
-        print(
-            "\nFULL TRACEBACK:"
-        )
-
-        traceback.print_exc()
-
-        print(
-            "\n======================================"
-        )
-
-        # --------------------------------------------------
-        # ALWAYS RETURN JSON
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # Return JSON instead of HTML.
+        #
+        # This prevents frontend errors such as:
+        #
+        # Unexpected token '<'
+        #
+        # because Flask's default error page is HTML.
+        # --------------------------------------------------------
 
         return jsonify({
+            "success": False,
 
-            "success":
-                False,
+            "error": str(exc),
 
-            "error":
-                str(error)
-
+            "type": type(exc).__name__,
         }), 500
 
 
-# ==========================================================
+# ============================================================
 # HEALTH CHECK
-# ==========================================================
+# ============================================================
 
 @app.route(
     "/health",
-    methods=["GET"]
+    methods=["GET"],
 )
 def health():
+    """
+    Health endpoint for Render and deployment monitoring.
+    """
+
+    try:
+
+        stored_scripts = (
+            plagiarism_detector.count_stored_scripts()
+        )
+
+    except Exception:
+
+        stored_scripts = -1
 
     return jsonify({
+        "status": "healthy",
 
-        "status":
-            "running",
+        "service": "LearnSphere AI",
 
-        "service":
-            "Smart Education Evaluation Agent",
+        "evaluation_agent": True,
 
-        "evaluation_agent":
-            "ready"
+        "plagiarism_agent": True,
 
+        "stored_plagiarism_scripts": stored_scripts,
     }), 200
 
 
-# ==========================================================
-# GLOBAL 413 HANDLER
+# ============================================================
 # FILE TOO LARGE
-# ==========================================================
+# ============================================================
 
 @app.errorhandler(413)
-def file_too_large(error):
+def request_entity_too_large(error):
+    """
+    Handle files larger than MAX_CONTENT_LENGTH.
+    """
 
     return jsonify({
+        "success": False,
 
-        "success":
-            False,
-
-        "error":
+        "error": (
             "Uploaded file is too large. "
             "Maximum allowed size is 50 MB."
-
+        ),
     }), 413
 
 
-# ==========================================================
-# GLOBAL 404 HANDLER
-# ==========================================================
+# ============================================================
+# NOT FOUND
+# ============================================================
 
 @app.errorhandler(404)
-def page_not_found(error):
+def not_found(error):
+    """
+    Return JSON for unknown API routes.
+    """
 
-    return jsonify({
+    if request.path.startswith(
+        "/api/"
+    ) or request.path == "/evaluate":
 
-        "success":
-            False,
+        return jsonify({
+            "success": False,
+            "error": "Endpoint not found.",
+        }), 404
 
-        "error":
-            "Requested endpoint was not found."
+    return render_template(
+        "index.html"
+    ), 200
 
-    }), 404
 
-
-# ==========================================================
-# GLOBAL 500 HANDLER
-# ==========================================================
+# ============================================================
+# INTERNAL SERVER ERROR
+# ============================================================
 
 @app.errorhandler(500)
 def internal_server_error(error):
+    """
+    Return JSON instead of Flask's HTML error page.
+    """
+
+    logger.error(
+        "Unhandled Flask 500 error: %s",
+        str(error),
+    )
 
     return jsonify({
+        "success": False,
 
-        "success":
-            False,
-
-        "error":
+        "error": (
             "Internal server error. "
             "Check the Render logs for details."
-
+        ),
     }), 500
+
+
+# ============================================================
+# LOCAL DEVELOPMENT
+# ============================================================
+
+if __name__ == "__main__":
+
+    app.run(
+        host="0.0.0.0",
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000,
+            )
+        ),
+        debug=False,
+    )
