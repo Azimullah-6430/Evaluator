@@ -14,10 +14,9 @@ class EvaluationAgent:
     """Multimodal examination evaluator for printed QPs and handwritten scripts."""
 
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.model = "gemini-3.6-flash"
         self.api_url = (
-            "https://generativelanguage.googleapis.com/"
+            "https://generativelanguage.googleapis.com"
             f"/v1beta/models/{self.model}:generateContent"
         )
         self.timeout = 180
@@ -28,6 +27,12 @@ class EvaluationAgent:
         print(f"MODEL: {self.model}")
         print("API KEY:", "CONFIGURED" if self.api_key else "NOT CONFIGURED")
         print("=" * 70)
+
+    @property
+    def api_key(self) -> str:
+        """Read the key fresh on every access so Flask's reloader child
+        process always sees the value loaded by load_dotenv()."""
+        return os.getenv("GEMINI_API_KEY", "").strip()
 
     def evaluate(self, request: Dict[str, Any]) -> Dict[str, Any]:
         print("=" * 70)
@@ -134,31 +139,29 @@ class EvaluationAgent:
     # ------------------------------------------------------------------
     def analyze_question_paper(self, question_paper: Dict[str, Any]) -> Dict[str, Any]:
         prompt = r"""
-You are an examination-paper structure extraction specialist.
+You are a senior examination-paper structure extraction specialist with expertise
+in Mathematics, Physics, Chemistry, Biology, Computer Science, and English.
 
-Inspect EVERY PAGE of the uploaded question paper. The paper may be a photo or
-scanned PDF, may be rotated 90 degrees, and may have perspective distortion.
-Mentally rotate/rectify it before reading.
+Inspect EVERY PAGE of the uploaded question paper carefully. The paper may be a
+photograph or scanned PDF, may be rotated, and may have perspective distortion.
+Mentally correct the orientation before reading.
 
-The uploaded paper is the ONLY source of truth for:
-- total examination marks
-- maximum marks per question/subquestion
-- section structure
-- internal choices
-- "answer any N" rules
-- question numbering
+EXTRACTION RULES:
+1. The uploaded paper is the ONLY source of truth. Never assume marks or structure.
+2. Extract the EXACT total marks as printed on the paper.
+3. Extract EXACT marks per question/subquestion as printed — never infer them.
+4. Preserve exact question numbering: 1, 1(a), 1(b), 7(a)(i), Q.1, etc.
+5. For STEM papers: extract ALL formulae, values, units, and numerical data from
+   each question — these are critical for correct evaluation later.
+6. For MCQ questions: extract ALL four/five options (a), (b), (c), (d) exactly as
+   printed, including the correct answer if a key is present.
+7. For Assertion-Reason questions: extract both the assertion and reason statements.
+8. Record section structure and any "attempt any N out of M" selection rules.
+9. If a parent question only groups subquestions, set its maximum_marks to 0 and
+   put real marks on each subquestion.
+10. Do NOT merge or skip any question.
 
-Never assume a 20/50/100 mark pattern.
-Never infer marks from a generic school/university pattern when the paper does
-not explicitly support that inference.
-
-Read all pages before producing the answer. Preserve exact question numbering,
-including forms such as 1(a), 1(b), 7(a)(i), etc.
-
-Important: a table or section can contain choice groups. Record the rule rather
-than treating every alternative as compulsory.
-
-Return ONLY valid JSON in exactly this high-level shape:
+Return ONLY valid JSON in exactly this shape:
 {
   "subject": "",
   "total_marks": 0,
@@ -177,20 +180,22 @@ Return ONLY valid JSON in exactly this high-level shape:
       "question_number": "1",
       "question_text": "",
       "maximum_marks": 0,
-      "question_type": "mcq|short_answer|long_answer|numerical|derivation|assertion_reason|other",
+      "question_type": "mcq|short_answer|long_answer|numerical|derivation|assertion_reason|diagram|other",
       "section": "",
       "is_optional": false,
       "choice_group": "",
       "choice_group_size": null,
       "subquestions": [],
-      "options": []
+      "options": [],
+      "correct_answer": "",
+      "key_concepts": []
     }
   ]
 }
 
-For every scored item, maximum_marks MUST be the marks assigned by the paper.
-If a parent question only groups separately scored subquestions, put its own
-maximum_marks as 0 and put the real marks on subquestions.
+For STEM questions, populate key_concepts with the specific formulas, laws,
+definitions, or theorems that the correct answer must reference.
+For MCQ, put the correct option letter in correct_answer when determinable.
 """
         text = self._call_gemini(prompt, [question_paper])
         return self._parse_json_response(text, "question paper analysis")
@@ -287,99 +292,163 @@ maximum_marks as 0 and put the real marks on subquestions.
         rubrics: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         rubric_instruction = (
-            "A rubric was uploaded. Use it as secondary grading guidance, but never exceed "
-            "the question paper's marks."
+            "A rubric was uploaded. Use it as the primary grading guide, but never exceed "
+            "the question paper's maximum marks for any question."
             if rubrics else
-            "No rubric was uploaded. Generate question-specific grading criteria from the question itself."
+            "No rubric uploaded. Derive strict grading criteria from the question itself, "
+            "the subject domain, and standard examination expectations."
         )
 
         prompt = f"""
-You are the final multimodal examination evaluator.
+You are a STRICT, HONEST, and EXPERT examination evaluator with deep subject
+knowledge in Mathematics, Physics, Chemistry, Biology, Computer Science, and English.
 
-SUBJECT PROVIDED BY TEACHER:
-{subject}
+Your job is to evaluate a student's handwritten answer script against the question
+paper. You must be completely honest — do not inflate marks to make the student
+feel good. Award marks only for what is genuinely correct.
 
-QUESTION-PAPER STRUCTURE ALREADY EXTRACTED:
+SUBJECT: {subject}
+
+QUESTION-PAPER STRUCTURE (source of truth for marks and questions):
 {json.dumps(question_paper_structure, ensure_ascii=False, indent=2)}
 
 {rubric_instruction}
 
-You have the ORIGINAL QUESTION PAPER and the ORIGINAL HANDWRITTEN ANSWER SCRIPT
-attached to this request. The images/PDF pages are authoritative visual evidence.
+==================== STEP 1: READ EVERYTHING FIRST ====================
 
-================ VISUAL READING RULES ================
+Before scoring a single mark:
+1. Read EVERY PAGE of the answer script from start to finish.
+2. Pages may be photographed, rotated 90/180°, skewed, or shadowed.
+   Mentally correct the orientation before reading.
+3. Note which question numbers the student wrote answers for.
+4. Students may answer in ANY ORDER — match by question number, never by page order.
+5. If a question number is unclear, use surrounding context and the question paper
+   to identify it. Do not guess silently.
+6. Read handwriting carefully. If part of an answer is genuinely unreadable,
+   state that explicitly — do not assume it says something correct.
+7. Identify ALL crossed-out answers. Grade only the final replacement if clear.
+   If crossed-out and replacement both exist and are unresolved, report it.
 
-1. Inspect EVERY PAGE of the answer script before scoring anything.
-2. Pages may be photographed, rotated 90/180 degrees, skewed, shadowed, or have
-   perspective distortion. Mentally rotate/rectify each page before reading.
-3. The handwriting is ordinary student handwriting in ruled notebooks. Read the
-   actual writing, not just OCR-like guesses.
-4. Red ticks/corrections/teacher marks are NOT automatically part of the student's
-   answer. Do not use teacher marks as evidence of correctness unless the task
-   explicitly provides an official correction key.
-5. A page may contain answers to several questions.
-6. A student can answer in ANY ORDER. Q10 before Q3, Q5 before Q2, etc. is valid.
-7. Match answers by the question number written by the student, never by page order.
-8. If a question number is written unclearly, inspect nearby text and the question
-   paper. Do not silently assign it to another question.
-9. Do not invent unreadable handwriting. If a small part is unreadable, mark that
-   part uncertain and grade only what can actually be established.
-10. Preserve mathematical symbols, fractions, powers, signs, units, equations,
-    diagrams and intermediate working as accurately as possible.
+==================== STEP 2: EVALUATE BY SUBJECT TYPE ==================
 
-================ QUESTION-PAPER RULES ================
+Apply the following STRICT rules based on the subject and question type:
 
-11. The QUESTION PAPER is the source of truth for maximum marks.
-12. Never use a hardcoded total such as 20, 50, or 100.
-13. Never use a hardcoded mark per question.
-14. Respect sections and internal choices.
-15. If the paper says "answer any 2/3/4", do NOT award compulsory marks for every
-    alternative. Determine which alternatives the student actually attempted and
-    apply the paper's selection rule.
-16. If a parent question contains scored subquestions, score the subquestions
-    separately and do not double-count the parent.
+--- MATHEMATICS ---
+• Check: correct formula selected → correct substitution → correct working →
+  correct final answer with correct units/simplification.
+• Award partial marks ONLY when: formula is correct AND working is shown AND
+  error is a single minor arithmetic slip. Do not award partial marks for a
+  completely wrong method that accidentally gives the right answer.
+• Wrong formula = 0, regardless of correct-looking subsequent steps.
+• Missing units where required = deduct from final answer mark.
+• Verify all arithmetic yourself. Do not trust the student's arithmetic.
+• For proofs/derivations: each logical step must be mathematically valid.
+  Award marks step-by-step; a wrong intermediate step stops further marks
+  unless the rest is independently valid.
 
-================ EVALUATION RULES ================
+--- PHYSICS ---
+• Check: correct law/principle identified → correct formula → correct
+  substitution with right values and units → correct numerical answer with units.
+• Direction matters for vectors. Wrong sign or direction = wrong answer.
+• Dimensional analysis errors = no marks for that part.
+• Diagrams (ray diagrams, circuit diagrams, etc.): must be labelled correctly.
+  An unlabelled or wrongly labelled diagram gets 0 for that diagram mark.
+• For derivations: each step must follow from valid physics principles.
 
-17. MCQ: compare the student's selected option with the correct answer derived from
-    the question. Correct gets the full question marks; incorrect gets zero unless
-    the paper explicitly provides partial credit.
-18. Assertion-Reason: evaluate both statements and the logical relationship using
-    the options printed in the paper.
-19. Mathematics/numerical: check the method, formula, substitutions, calculations,
-    signs, units and final answer. Give justified partial marks for correct work with
-    a minor arithmetic/final-answer error.
-20. Derivations/proofs: award marks for valid logical steps, not only the final line.
-21. Long answers: grade relevance, conceptual correctness, completeness, explanation,
-    examples/diagrams where required, and important missing points.
-22. Short answers: grade against the exact concept asked by the question.
-23. Do not award marks merely because an answer is long.
-24. Do not penalize spelling/grammar when the academic meaning is clear, unless it
-    changes the technical meaning.
-25. Never award more than the maximum marks.
-26. Never give negative marks unless the uploaded paper explicitly requires them.
-27. If the answer is blank, award 0.
-28. If the student crossed out an answer and clearly supplied a replacement, grade
-    the final replacement. If both attempts are visibly unresolved, report that.
-29. If multiple answers are given for an MCQ and the final selection is unclear,
-    do not guess.
+--- CHEMISTRY ---
+• Chemical equations must be balanced. An unbalanced equation gets 0 for the
+  equation mark even if the correct compounds are written.
+• Check: correct reactants, correct products, correct state symbols (if required),
+  correct balancing.
+• Numerical problems: check formula, molar mass, moles, stoichiometry, and units.
+• Organic chemistry: check IUPAC names, structural formulas, and reaction mechanisms
+  step by step.
+• Wrong chemical formula (e.g., H3O instead of H2O) = wrong, do not award marks.
 
-================ ACCURACY SAFETY ====================
+--- BIOLOGY ---
+• Check: correct scientific terminology used. Common names without scientific
+  context may not get full marks.
+• Diagrams must be neat, labelled correctly, and show the required structures.
+  Missing labels lose those marks.
+• For processes (e.g., mitosis, photosynthesis): each stage/step must be described
+  correctly in sequence. Skipped steps lose those marks.
+• Definitions must be precise — vague or partially correct definitions get partial
+  marks only.
 
-Before finalizing, perform a second internal check:
-A. Every scored question in the paper has been considered.
-B. Every student answer has been matched by QUESTION NUMBER.
-C. No answer was shifted because of page order.
-D. No question received another question's marks.
-E. No awarded mark exceeds its maximum.
-F. The final total respects optional-choice rules.
-G. The final total cannot exceed the examination total.
+--- MCQ (all subjects) ---
+• There is exactly ONE correct answer per MCQ unless the paper states otherwise.
+• Correct option = full marks. Wrong option = 0. No partial credit.
+• If the student circled multiple options and no clear final choice, award 0.
+• Determine the correct answer from the question content and your subject knowledge.
 
-================ OUTPUT ==============================
+--- ASSERTION-REASON (all subjects) ---
+• Evaluate: Is Assertion true? Is Reason true? Is the Reason a correct explanation
+  of the Assertion? Map to the option (a/b/c/d) printed in the paper.
+• All three sub-checks must be correct for full marks.
 
-Return ONLY valid JSON.
+--- SHORT ANSWER (all subjects) ---
+• Grade against the SPECIFIC concept asked. A correct but off-topic answer gets 0.
+• Partial marks only for answers that are partially correct on the exact topic asked.
 
-Use this structure:
+--- LONG ANSWER / ESSAY (all subjects) ---
+• Grade: relevance, conceptual accuracy, completeness (all required points present),
+  logical structure, use of examples/diagrams where required.
+• Missing a key required point = lose that mark, even if everything else is good.
+• Do not award marks for padding or repetition.
+
+--- ENGLISH ---
+• Grammar and spelling errors that change meaning = penalize.
+• Grammar and spelling errors that do NOT change meaning = do not penalize
+  (unless the question is specifically about grammar/spelling).
+• Evaluate: content relevance, structure, vocabulary, and question-specific
+  requirements (format of letter/report/essay etc.).
+
+==================== STEP 3: STRICT HONESTY RULES ====================
+
+A. NEVER award marks for:
+   - Blank answers
+   - Copied question text without any answer
+   - Answers that are completely off-topic
+   - Wrong method that coincidentally reaches the right answer
+   - Answers where the student clearly does not understand the concept
+
+B. ALWAYS award full marks for:
+   - Answers that are completely and correctly done, even if untidily written
+   - Correct alternative methods that reach the correct answer
+
+C. PARTIAL MARKS — only award when:
+   - The method is correct but there is one minor error (not a conceptual error)
+   - Some required points are present but others are missing
+   - A diagram is partially correct (only for the correct parts)
+
+D. NEVER:
+   - Award more than maximum_marks for any question
+   - Give benefit of the doubt on ambiguous chemistry/math/physics answers
+   - Round up marks because the student "tried hard"
+   - Give marks for restating the question
+
+E. FEEDBACK must be specific and honest:
+   - If the answer is wrong, say exactly WHY it is wrong
+   - State what the correct answer/method should have been
+   - List every missing point that cost marks
+   - Do not say "good attempt" for a wrong answer
+
+==================== STEP 4: ACCURACY SELF-CHECK ====================
+
+Before producing output, verify internally:
+A. Every question in the paper has an evaluation entry.
+B. Every answer was matched by QUESTION NUMBER, not page position.
+C. No question received marks from another question's maximum.
+D. No awarded marks exceed the question's maximum.
+E. Optional/choice-group questions are handled correctly.
+F. The sum of awarded marks does not exceed the paper total.
+G. MCQ answers were verified against the correct answer from the question.
+H. All arithmetic in numerical questions was independently verified.
+
+==================== OUTPUT FORMAT ====================
+
+Return ONLY valid JSON — no markdown, no code fences, no extra text.
+
 {{
   "evaluations": [
     {{
@@ -391,12 +460,12 @@ Use this structure:
       "choice_group": "",
       "correct": true,
       "confidence": 0.95,
-      "answer_summary": "Short faithful summary of what the student wrote",
+      "answer_summary": "Exact faithful description of what the student wrote/drew",
       "feedback": {{
-        "what_was_done_well": [],
-        "missing_points": [],
-        "expected_answer": "Correct/ideal answer based on the question",
-        "improvement": "Specific improvement"
+        "what_was_done_well": ["List only genuinely correct things"],
+        "missing_points": ["Every specific point that was missing or wrong"],
+        "expected_answer": "The complete correct answer/solution/method",
+        "improvement": "Specific actionable advice to fix this answer"
       }}
     }}
   ],
@@ -409,16 +478,18 @@ Use this structure:
       "ignored_optional_questions": []
     }}
   ],
-  "overall_feedback": "",
-  "evaluation_notes": []
+  "overall_feedback": "Honest overall summary: strengths, weaknesses, subject-specific advice",
+  "evaluation_notes": ["Any important observations about the script or evaluation"]
 }}
 
-IMPORTANT:
-- Return an evaluation entry for each actual scored question/subquestion.
+RULES FOR OUTPUT:
+- awarded_marks must satisfy: 0 <= awarded_marks <= maximum_marks (never exceed).
 - maximum_marks must match the question paper structure exactly.
-- choice_group must match the question paper structure exactly when applicable.
-- awarded_marks must be numeric and satisfy 0 <= awarded_marks <= maximum_marks.
-- Do not output markdown or code fences.
+- what_was_done_well must be empty [] if nothing was done correctly.
+- missing_points must list EVERY specific point that cost marks.
+- expected_answer must contain the actual correct answer/solution, not a vague hint.
+- confidence: your confidence in the awarded_marks (0.0 to 1.0).
+  Use lower confidence if handwriting was unclear for that answer.
 """
 
         files = [question_paper, answer_script]
